@@ -1,6 +1,6 @@
 # E2::Search
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 02 May 2003
 #
 # See bottom for pod documentation.
 
@@ -12,9 +12,8 @@ use warnings;
 use Carp;
 
 use E2::Ticker;
-use XML::Twig;
 
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 our @ISA = qw(E2::Ticker);
 
 sub new { 
@@ -37,40 +36,47 @@ sub search {
 		keywords => $keywords,
 		nodetype => $nodetype
 	);
+	
+	my $handlers = {
+		'searchinfo/keywords' => sub {
+			(my $a, my $b) = @_;
+			$self->{keywords} = $b->text;
+		},
+		'searchinfo/search_nodetype' => sub {
+			(my $a, my $b) = @_;
+			$self->{searchtype} = $b->text;
+		},
+		'searchresults/e2link' => sub {
+			(my $a, my $b) = @_;
+			if( !$self->{max_results} || 
+			    !$self->{results} || 
+			    $self->{max_results} > 
+			    scalar @{$self->{results}} ) {
+
+				push @{ $self->{results} }, {
+					title => $b->text, 
+					node_id =>$b->{att}->{node_id}
+				};
+			}
+		}
+	};
+
 
 	$self->{keywords} = undef;
 	$self->{searchtype} = undef;
 	@{ $self->{results} } = ();
 
-	$self->parse(
-		'search',
-		{
-			'searchinfo/keywords' => sub {
-				(my $a, my $b) = @_;
-				$self->{keywords} = $b->text;
-			},
-			'searchinfo/search_nodetype' => sub {
-				(my $a, my $b) = @_;
-				$self->{searchtype} = $b->text;
-			},
-			'searchresults/e2link' => sub {
-				(my $a, my $b) = @_;
-				if( !$self->{max_results} || 
-				    !$self->{results} || 
-				    $self->{max_results} > 
-				    scalar @{$self->{results}} ) {
-
-					push @{ $self->{results} }, {
-						title => $b->text, 
-						node_id =>$b->{att}->{node_id}
-					};
-				}
-			}
-		},
-		%opt
-	);
-
-	return @{ $self->{results} };
+	return $self->thread_then(
+		[
+			\&E2::Ticker::parse,
+			$self,
+			'search',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{results} };
+	});
 }
 
 1;

@@ -42,34 +42,34 @@ sub clients {
 sub update {
 	my $self = shift or croak "Usage: update E2CLIENTVERSION";
 
+	my $handlers = {
+		'client' => sub {
+			(my $a, my $b) = @_;
+			my %client;
+
+			$client{name} = $b->{att}->{client_class};
+			$client{id}   = $b->{att}->{client_id};
+			$client{version} =
+				$b->first_child('version')->text;
+			$client{homepage} =
+				$b->first_child('homepage')->text;
+			$client{download} =
+				$b->first_child('download')->text;
+
+			my $c = $b->first_child('maintainer');
+			$client{maintainer} = $c->text;
+			$client{maintainer_id} = $c->{att}->{node_id};
+
+			$self->{clients}->{$client{name}} = \%client;
+		}
+	};
+
 	$self->{clients} = {};
 
-	$self->parse(
+	return $self->parse(
 		'clientversions',
-		{
-			'client' => sub {
-				(my $a, my $b) = @_;
-				my %client;
-
-				$client{name} = $b->{att}->{client_class};
-				$client{id}   = $b->{att}->{client_id};
-				$client{version} =
-					$b->first_child('version')->text;
-				$client{homepage} =
-					$b->first_child('homepage')->text;
-				$client{download} =
-					$b->first_child('download')->text;
-
-				my $c = $b->first_child('maintainer');
-				$client{maintainer} = $c->text;
-				$client{maintainer_id} = $c->{att}->{node_id};
-
-				$self->{clients}->{$client{name}} = \%client;
-			}
-		}
+		$handlers
 	);
-
-	return 1;
 }
 
 1;
@@ -93,10 +93,10 @@ E2::ClientVersion - Load client version information from everything2.com
 	# Print the current and available version of e2interface
 
 	my $ver   = $client->version;        # See E2::Interface;
-	my $name  = $client->client_name     # See E2::interface;
+	my $name  = $client->client_name;    # See E2::interface;
 
 	print "We are using $name/$ver.";
-	Print "\nThe newest available version of $name is "
+	print "\nThe newest available version of $name is ";
 	print $c->{$name}->{version};
 
 

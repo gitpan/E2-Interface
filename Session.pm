@@ -1,6 +1,6 @@
 # E2::Session
 # Jose M. Weeks <jose@joseweeks.com>
-# 16 March 2003
+# 02 May 2003
 #
 # See bottom for pod documentation.
 
@@ -12,9 +12,8 @@ use warnings;
 use Carp;
 
 use E2::Ticker;
-use XML::Twig;
 
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 our @ISA = qw(E2::Ticker);
 
 sub new;
@@ -122,74 +121,71 @@ sub list_personal_nodes {
 sub update {
 	my $self = shift or croak "Usage: update E2SESSION";
 
-	$self->clear;
-
-	$self->parse(
-		'session',
-		{
-			'currentuser' => sub {
-				(my $a, my $b) = @_;
-				$self->{this_username} = $b->text;
-				$self->{this_user_id}  = $b->{att}->{user_id};
-			},
-			'servertime' => sub {
-				(my $a, my $b) = @_;
-				$self->{time} = $b->text;
-			},
-			'borgstatus' => sub {
-				(my $a, my $b) = @_;
-				$self->{borged} = $b->{att}->{value};
-			},
-			'cools' => sub {
-				(my $a, my $b) = @_;
-				$self->{cools} = $b->text;
-			},
-			'votesleft' => sub {
-				(my $a, my $b) = @_;
-				$self->{votes} = $b->text;
-			},
-			'karma' => sub {
-				(my $a, my $b) = @_;
-				$self->{karma} = $b->text;
-			},
-			'experience' => sub {
-				(my $a, my $b) = @_;
-				$self->{experience} = $b->text;
-			},
-			'numwriteups' => sub {
-				(my $a, my $b) = @_;
-				$self->{writeups} = $b->text;
-			},
-			'forbiddance' => sub {
-				(my $a, my $b) = @_;
-				$self->{forbidden} = $b->text;
-			},
-			'xpinfo' => sub {
-				(my $a, my $b) = @_;
-				if( my $c = $b->first_child('xpchange') ) {
-					$self->{xpchange} = $c->text;
-				}
-				if( my $c = $b->first_child('nextlevel') ) {
-					$self->{nextlevel} = {
-						experience => $c->{att}->
-							{experience},
-						writeups => $c->{att}->
-							{writeups},
-						level => $c->text
-					};
-				}
-			},
-			'personalnodes/e2node' => sub {
-				(my $a, my $b) = @_;
-				push @{ $self->{personal} }, {
-					title => $b->text,
-					id    => $b->{att}->{node_id}
+	my $handlers = {
+		'currentuser' => sub {
+			(my $a, my $b) = @_;
+			$self->{this_username} = $b->text;
+			$self->{this_user_id}  = $b->{att}->{user_id};
+		},
+		'servertime' => sub {
+			(my $a, my $b) = @_;
+			$self->{time} = $b->text;
+		},
+		'borgstatus' => sub {
+			(my $a, my $b) = @_;
+			$self->{borged} = $b->{att}->{value};
+		},
+		'cools' => sub {
+			(my $a, my $b) = @_;
+			$self->{cools} = $b->text;
+		},
+		'votesleft' => sub {
+			(my $a, my $b) = @_;
+			$self->{votes} = $b->text;
+		},
+		'karma' => sub {
+			(my $a, my $b) = @_;
+			$self->{karma} = $b->text;
+		},
+		'experience' => sub {
+			(my $a, my $b) = @_;
+			$self->{experience} = $b->text;
+		},
+		'numwriteups' => sub {
+			(my $a, my $b) = @_;
+			$self->{writeups} = $b->text;
+		},
+		'forbiddance' => sub {
+			(my $a, my $b) = @_;
+			$self->{forbidden} = $b->text;
+		},
+		'xpinfo' => sub {
+			(my $a, my $b) = @_;
+			if( my $c = $b->first_child('xpchange') ) {
+				$self->{xpchange} = $c->text;
+			}
+			if( my $c = $b->first_child('nextlevel') ) {
+				$self->{nextlevel} = {
+					experience => $c->{att}->
+						{experience},
+					writeups => $c->{att}->
+						{writeups},
+					level => $c->text
 				};
 			}
+		},
+		'personalnodes/e2node' => sub {
+			(my $a, my $b) = @_;
+			push @{ $self->{personal} }, {
+				title => $b->text,
+				id    => $b->{att}->{node_id}
+			};
 		}
-	);
+	};
 
-	return 1;
+	$self->clear;
+
+	return $self->parse( 'session', $handlers );
 }
 
 1;

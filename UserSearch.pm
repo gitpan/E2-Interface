@@ -1,6 +1,6 @@
 # E2::UserSearch
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 02 May 2003
 #
 # See bottom for pod documentation.
 
@@ -13,9 +13,8 @@ use Carp;
 
 use E2::Ticker;
 use E2::Writeup;
-use XML::Twig;
 
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 our @ISA = qw(E2::Ticker);
 
 sub new;
@@ -39,8 +38,8 @@ sub new {
 sub clear {
 	my $self = shift or croak "Usage: clear E2USERSEARCH";
 
-	$self->{lastuser} = undef;	# username of last user searched
-	@{ $self->{writeups} } = ();	# list of E2::Writeup
+	$self->{lastuser} 	= undef;	# username of last user searched
+	@{ $self->{writeups} } 	= ();		# list of E2::Writeup
 
 	return 1;
 }
@@ -93,64 +92,66 @@ sub writeups {
 
 	$self->{rep_number} = 100000 - ($startat || 0);
 
-	# Now pass E2::Ticker::parse 'username', a 
-	# twig_handler ref, and our %options
+	my $handlers = {
+		'wu' => sub {
+			(my $a, my $b) = @_;
+			my $wu = new E2::Writeup;
 
-	$self->parse( 
-		'usersearch',
-		{ 
-			'wu' => sub {
-				(my $a, my $b) = @_;
-				my $wu = new E2::Writeup;
+			$wu->{type} = 'writeup';
 
-				$wu->{type} = 'writeup';
-
-				$wu->{createtime} = $b->{att}->{createtime};
-				$wu->{marked}	= $b->{att}->{marked};
-				$wu->{hidden}	= $b->{att}->{hidden};
-				$wu->{wrtype}	= $b->{att}->{wrtype};
+			$wu->{createtime} = $b->{att}->{createtime};
+			$wu->{marked}	= $b->{att}->{marked};
+			$wu->{hidden}	= $b->{att}->{hidden};
+			$wu->{wrtype}	= $b->{att}->{wrtype};
 
 
-				$wu->{cool_count} = $b->{att}->{cools};
+			$wu->{cool_count} = $b->{att}->{cools};
 
-				if( my $rep = $b->first_child('rep') ) {
-					$wu->{rep}->{up} = $rep->{att}->{up};
-					$wu->{rep}->{down} = $rep->{att}->{down};
-					$wu->{rep}->{total} = $rep->text;
-				}
-	
-				if( my $lnk = $b->first_child( 'e2link' ) ) {
-					$wu->{title} = $lnk->text;
-					$wu->{node_id} = $lnk->{att}->{node_id};
-				}
-
-				if( my $parent = $b->first_child( 'parent' ) ) {
-					my $l = $parent->first_child('e2link');
-					$wu->{parent} = $l->text;
-					$wu->{parent_id} = $l->{att}->{node_id};
-				}
-
-				# We're going to add a value to the E2::Writeup.
-				# This is sort of a kludgy thing to do, but
-				# the situation (having to infer reputation
-				# based upon context) means we've got to store
-				# it somewhere.
-
-				if( $sort_by eq 'rep' ) {
-					$wu->{_rep_position} = $self->{rep_number}--;
-				} else {
-					$wu->{_rep_position} = 0;
-				}
-
-				push @{ $self->{writeups} }, $wu;
+			if( my $rep = $b->first_child('rep') ) {
+				$wu->{rep}->{up} = $rep->{att}->{up};
+				$wu->{rep}->{down} = $rep->{att}->{down};
+				$wu->{rep}->{total} = $rep->text;
 			}
-		},
-		%options
-	);		
+	
+			if( my $lnk = $b->first_child( 'e2link' ) ) {
+				$wu->{title} = $lnk->text;
+				$wu->{node_id} = $lnk->{att}->{node_id};
+			}
 
-	$self->{lastuser} = $user;
+			if( my $parent = $b->first_child( 'parent' ) ) {
+				my $l = $parent->first_child('e2link');
+				$wu->{parent} = $l->text;
+				$wu->{parent_id} = $l->{att}->{node_id};
+			}
 
-	return @{ $self->{writeups} };
+			# We're going to add a value to the E2::Writeup.
+			# This is sort of a kludgy thing to do, but
+			# the situation (having to infer reputation
+			# based upon context) means we've got to store
+			# it somewhere.
+
+			if( $sort_by eq 'rep' ) {
+				$wu->{_rep_position} = $self->{rep_number}--;
+			} else {
+				$wu->{_rep_position} = 0;
+			}
+
+			push @{ $self->{writeups} }, $wu;
+		}
+	};
+
+	return $self->thread_then(
+		[
+			\&E2::Ticker::parse,
+			$self,
+			'usersearch',
+			$handlers,
+			%options
+		],
+	sub {
+		$self->{lastuser} = $user;
+		return @{ $self->{writeups} };
+	});
 }
 
 sub sort_results {

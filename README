@@ -1,13 +1,13 @@
-e2interface/0.21
+e2interface/0.30
 ================
 
-This is the initial CPAN release of e2interface,
-a perl-based client interface to the everything2.com
-collaborative database.
+e2interface is a client library for the everything2.com collaborative database.
 
-See the manpages for E2::Interface and its descendants
-and http://everything2.com/?node=e2interface for more
-detailed information.
+See the manpages for E2::Interface and its descendants, as well as
+
+	http://everything2.com/?node=e2interface
+
+for more detailed information.
 
 INSTALLATION
 
@@ -22,7 +22,14 @@ DEPENDENCIES
 
 This module requires these other modules and libraries:
 
-  XML::Twig, expat, LWP
+  Perl 5.006
+  System libraries: expat
+  Perl modules:     XML::Twig, LWP, and Unicode::String
+
+To use this modules built-in threading capabilities, the
+following is required as well:
+
+  Perl 5.8.0
 
 COPYRIGHT AND LICENCE
 

@@ -1,6 +1,6 @@
 # E2::User
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 04 May 2003
 #
 # See bottom for pod documentation.
 
@@ -10,11 +10,11 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
+use HTML::Entities;
 
-use XML::Twig;
 use E2::Node;
 
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 our @ISA = qw(E2::Node);
 
 sub new;
@@ -47,8 +47,7 @@ sub new {
 	my $class = ref( $arg ) || $arg;
 	my $self  = $class->SUPER::new();
 
-	bless ($self, $class);
-
+	$self->clear;
 	return $self;
 }
 
@@ -94,7 +93,7 @@ sub twig_handlers {
 		},
 		'node/doctext' => sub {
 			(my $a, my $b) = @_;
-			$self->{text} = $b->text;
+			$self->{text} = decode_entities( $b->text );
 		},
 		'experience' => sub {
 			(my $a, my $b) = @_;

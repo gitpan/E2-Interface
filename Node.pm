@@ -1,6 +1,6 @@
 # E2::Node
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 14 May 2003
 #
 # See bottom for pod documentation.
 
@@ -10,12 +10,11 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use XML::Twig;
 
 use E2::Interface;
 
 our @ISA = "E2::Interface";
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 
 # Prototypes
 
@@ -43,14 +42,8 @@ sub new {
 	my $class = ref( $arg ) || $arg;
 	my $self  = $class->SUPER::new();
 
-	$self->{title}		= undef;
-	$self->{node_id}	= undef;
-	$self->{author}	= undef;
-	$self->{author_id}	= undef;
-	$self->{time}		= undef;
-	$self->{type}		= undef;
+	$self->clear;
 
-	bless( $self, $class );
 	return $self;
 }
 
@@ -63,11 +56,18 @@ sub clear {
 	$self->{author_id}	= undef; # user_id of author
 	$self->{time}		= undef; # Creation time
 	$self->{type}		= undef; # Writeup type
+
 	return 1;
 }
 
 sub type_as_string {
 	return undef;
+}
+
+sub autodetect {
+	my $self = shift or croak "Usage: autodetect E2NODE";
+	bless $self, 'E2::Node';
+	return 1;
 }
 
 sub load {
@@ -81,9 +81,11 @@ sub load {
 	$opt{displaytype} = 'xmltrue';
 	$opt{type}	  = $type	if $type;
 
-	my $req = $self->process_request( %opt );
-
-	return $self->load_from_xml( $req, $type );
+	return $self->thread_then( [ \&E2::Interface::process_request, $self, %opt ],
+	sub {
+		my $r = shift;
+		return $self->load_from_xml( $r, $type );
+	});
 }
 
 sub load_by_id {
@@ -97,9 +99,11 @@ sub load_by_id {
 	$opt{displaytype}	= 'xmltrue';
 	$opt{type}		= $type		if $type;
 
-	my $req = $self->process_request( %opt );
-
-	return $self->load_from_xml( $req, $type );
+	return $self->thread_then( [ \&E2::Interface::process_request, $self, %opt ],
+	sub {
+		my $r = shift;
+		return $self->load_from_xml( $r, $type );
+	});
 }
 
 
@@ -201,14 +205,9 @@ sub load_from_xml {
 		%handlers = ( %handlers, %h2 );  # Append twig_handlers
 	}
 
-	my $twig = new XML::Twig( twig_handlers => \%handlers );
-
 	$self->clear;
 
-	eval{ $twig->parse( $xml ) };
-	if( $@ ) {
-		croak "Parse error: $@";
-	}
+	$self->parse_twig( $xml, \%handlers );
 
 	return 1;
 }
@@ -225,13 +224,15 @@ sub bookmark {
 		croak "No node specified";
 	}
 
-	my $r = $self->process_request(
-			node_id => $node_id,
-			op	=> "bookmark",
-			displaytype => "xmltrue"
-	        );
-
-	return 1;
+	return $self->thread_then( [ \&E2::Interface::process_request, 
+			$self,
+			node_id		=> $node_id,
+			op		=> "bookmark",
+			displaytype	=> "xmltrue"
+	],
+	sub {
+		return 1;
+	});
 }
 
 #---------------

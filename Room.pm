@@ -1,6 +1,6 @@
 # E2::Room.pm
 # Jose M. Weeks <jose@joseweeks.com>
-# 16 March 2003
+# 04 May 2003
 #
 # See bottom for pod documentation.
 
@@ -14,7 +14,7 @@ use Carp;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 
 # Prototypes
 
@@ -38,7 +38,7 @@ sub new {
 
 	# See clear for the other members of $self
 
-	bless( $self, $class );
+	$self->clear;
 	return $self;
 }
 
@@ -98,10 +98,10 @@ E2::Room - A module for loading rooms on L<http://everything2.com>.
 	$room->login( "username", "password" ); # See E2::Interface
 
 	if( $room->load( "test" ) ) {                       # See E2::Node
-		print 'Group name: ' . $group->title;       # See E2::Node
+		print 'Room name: ' . $room->title;         # See E2::Node
 		print '\nDescription: . $group->description;
 		print '\nYou ' . 
-			($group->can_enter ? "can" : "can't") .
+			($room->can_enter ? "can" : "can't") .
 			"enter.\n";
 	}
 
@@ -123,15 +123,15 @@ C<new> creates a new C<E2::Room> object. Until that object is logged in in one w
 
 =over
 
-=item $group-E<gt>clear
+=item $room-E<gt>clear
 
 C<clear> clears all the information currently stored in $group.
 
-=item $group-E<gt>description
+=item $room-E<gt>description
 
 This method returns the description string of the currently-loaded room. It returns C<undef> if no usergroup is loaded.
 
-=item $group-E<gt>can_enter
+=item $room-E<gt>can_enter
 
 This method returns a boolean value: whether or not the currently-logged-in user can enter this room.
 

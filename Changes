@@ -1,5 +1,35 @@
 Revision history for Perl extension e2interface.
 
+
+0.30  Wed May 14 2003
+			- Added multithreading for all network-dependant
+			  methods
+
+			- Reworked E2::Interface::clone() so that changes
+			  made to cloned objects after the call to clone()
+			  will be propogated
+
+			- Reworked E2::Interface::login() to request cookies
+			  instead of packing them itself (there was an issue
+			  with case-sensitivity of usernames they way it was
+			  originally implemented)
+
+			- Added E2::Interface::document()--callers now have
+			  access to the document most recently retrieved and
+			  processed.
+
+			- Added archive handling to E2::Message.
+
+			- Brought docs up-to-date.
+
+0.22  Sun Apr 20 2003 (unreleased)
+			- Brought E2::Ticker up to parity with the current
+			  everything2 tickers.
+
+			- Centralized parse code at E2::Interface::parse_twig
+
+			- Test cases are now included in the tarball.
+
 0.21  Sun Mar 16 2003
 			- Added E2::Room, E2::Session, and
 			  E2::ClientVersion.

@@ -1,6 +1,6 @@
 # E2::E2Node
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 04 May 2003
 #
 # See bottom for pod documentation.
 
@@ -10,13 +10,12 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use XML::Twig;
 
 use E2::Node;
 use E2::Writeup;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 
 # Prototypes
 
@@ -25,7 +24,6 @@ sub clear;
 
 sub has_mine;
 sub is_locked;
-sub exists;
 
 sub list_writeups;
 sub list_softlinks;
@@ -57,13 +55,14 @@ sub new {
 
 	# See clear for the other members of $self
 
-	bless( $self, $class );
+	$self->clear;
+	
 	return $self;
 }
 
 sub clear {
 	my $self = shift	or croak "Usage: clear E2E2NODE";
-
+	
 	@{ $self->{writeups} } = ();	 # Array to hold writeups in currently
 					 # loaded node. See E2::Writeup.
 	
@@ -255,24 +254,31 @@ sub create {
 
 	if( !$self->logged_in ) { return undef; }
 
-	my $r = $self->process_request(
-		  node 	=> $title,
-		  op	=> "new",
-		  type	=> "e2node",
-		  displaytype => "xmltrue",
-		  e2node_createdby_user => $self->{user_id}
-		);
 
-	if( !$r =~ /<author .*?user_id="(.*?)"/s ) { 
-		croak "Invalid document";
-	}
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			node 	=> $title,
+		  	op	=> "new",
+		  	type	=> "e2node",
+		  	displaytype => "xmltrue",
+		  	e2node_createdby_user => $self->{user_id}
+		],
+	sub {
 
-	if( $1 == $self->this_user_id ) {
-		load_from_xml( $r );
-		return 1;
-	}
+		my $r = shift;
+		if( !$r =~ /<author .*?user_id="(.*?)"/s ) { 
+			croak "Invalid document";
+		}
 
-	return 0;
+		if( $1 == $self->this_user_id ) {
+			load_from_xml( $r );
+			return 1;
+		}
+
+		return 0;
+	});
 }
 
 sub vote {
@@ -294,13 +300,21 @@ sub vote {
 		$params{ "vote__" . $id } = $v;
 	}
 
-	my $response = $self->process_request( %params );
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			%params
+		],
+	sub {
+		my $r = shift;
+		
+		if( !($r =~ /<node /s ) ) {
+			croak 'Invalid document';
+		}
 
-	if( !($response =~ /<node /s ) ) {
-		croak 'Invalid document';
-	}
-
-	return $self->load_from_xml( $response );
+		return $self->load_from_xml( $r );
+	});
 }
 
 sub add_writeup {
@@ -314,20 +328,25 @@ sub add_writeup {
 
 	if( !$self->logged_in ) { return undef; }
 
-	my $request = $self->process_request(
-				node	=> "new writeup",
-				op	=> "new",
-				type	=> "writeup",
-				node	=> $self->{node_id},	# Why two "node" params? I dunno.
-				writeup_notnew	=> $nodisplay,
-				writeup_doctext	=> $text,
-				writeup_parent_e2node	=> $self->{node_id},
-				writeuptype	=> $type
-	);
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			node	=> "new writeup",
+			op	=> "new",
+			type	=> "writeup",
+			node	=> $self->{node_id},	# Why two "node" params? I dunno.
+			writeup_notnew	=> $nodisplay,
+			writeup_doctext	=> $text,
+			writeup_parent_e2node	=> $self->{node_id},
+			writeuptype	=> $type
+		],
+	sub {
+	
+		# FIXME - Add code to test for success.
 
-	# FIXME - Add code to test for success.
-
-	return 1;
+		return 1;
+	});
 }
 
 1;

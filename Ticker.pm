@@ -1,6 +1,6 @@
 # E2::Ticker
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 01 May 2003
 #
 # See bottom for pod documentation.
 
@@ -10,12 +10,10 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use XML::Twig;
-use HTTP::Request::Common qw(HEAD GET POST);
 use E2::Interface;
 
 our @ISA = "E2::Interface";
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 
 our %xml_title = (
 	interfaces	=> "XML Interfaces Ticker",
@@ -23,7 +21,7 @@ our %xml_title = (
 	messages	=> "Universal Message XML Ticker",
 	session		=> "Personal Session XML Ticker",
 	search		=> "E2 XML Search Interface",
-	scratchpad	=> "Scratch Pad XML Ticker",
+	scratch		=> "Scratch Pad XML Ticker",
 	vars		=> "Raw VARS XML Ticker",
 	timesince	=> "Time Since XML Ticker",
 	usersearch	=> "User Search XML Ticker II",
@@ -101,78 +99,104 @@ sub parse {
 
 		while( my $l = <$h> ) { $r .= $l; } # slurp file
 	
+		$self->parse_twig( $r, $handler );
+
+		return 1;
+	}
+
+	
 	# Otherwise, do the normal thing, which is to load the
 	# node from e2.
 
-	} else {
-		$r = $self->process_request( node => $title, @_ );
-	}
-	
-	# FIXME!!!
-	#
-	# This is a workaround, and I really don't like this, but
-	# some usernames contain "&" and they make the parser vomit
-
-	if( $type eq 'coolnodes' ) {
-		$r =~ s/&/&amp;/sg;
-	}
-
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			node => $title,
+			@_
+		],
+	sub {
+		my $r = shift;
 		
-	my $twig = new XML::Twig( twig_handlers => $handler );
+		# FIXME!!!
+		#
+		# This is a workaround, and I really don't like this, but
+		# some usernames contain "&" and they make the parser vomit
 
-	eval{ $twig->parse( $r ) };
-	if( $@ ) {
-		croak "Parse error: $@";
-	}
+		if( $type eq 'coolnodes' ) {
+			$r =~ s/&/&amp;/sg;
+		}
 
-	return 1;
+		$self->parse_twig( $r, $handler );
+	
+		return 1;
+	});
 }
 
 sub load_interfaces {
 	my $self = shift or croak "Usage: interfaces E2TICKER";
 
+	my $handlers = {
+		'this' => sub {
+			(my $a, my $b) = @_;
+			$self->{xml_interfaces}->{interfaces} =
+				$b->text;
+		},
+		'xmlexport' => sub {
+			(my $a, my $b) = @_;
+			my $c = $b->{att}->{iface};
+			$self->{xml_interfaces}->{$c} = $b->text;
+		}
+	};
+
+
 	# Since we're loading a URL instead of a node or node_id,
 	# we're going to have to do this one without the help
-	# of E2::Interface.
-	#
-	# The following is taken mostly from E2::Interface::process_request_raw
+	# of E2::Interface::process_request.
 
-	my $req = HTTP::Request->new( 
-		GET => "http://$self->{domain}/interfaces.xml"
-	);
+	# If we're working threaded, we have to do it the hard way
+
+	if( $self->{threads} ) {
+		return thread_then(
+			[
+				\&E2::Interface::start_job,
+				$self,
+				'POST',
+				"http://$self->{domain}/interfaces.xml",
+				$self->{cookie},
+				$self->{agentstring},
+				links_noparse => $self->{links_noparse},
+			],
+		sub {
+			my $response = shift;
+
+			$self->{xml_interfaces} = {};
 	
-	my $response = $self->{agent}->simple_request( $req );
-	if( ! $response->is_success ) {
-		croak "Unable to process request";
+			$self->parse_twig( $response, $handlers );
+			
+			return 1;
+
+		});
 	}
 
-	my $xml = $response->as_string;
+	# Otherwise, do the same as above, but without passing the work off
+	# to another thread.
 
-        $xml =~ s/.*?\n\n//s; # Strip headers
+	my $response = process_request_raw(
+				'POST',
+				"http://$self->{domain}/interfaces.xml", 
+				$self->{cookie},
+				$self->{agentstring},
+				links_noparse => $self->{links_noparse},
+		       );
+
+	$self->cookie( extract_cookie( $response ) );
+
+	my $xml = post_process( $response );
 	
-
-	# Okay, whew, well, we got the xml, so parse it
-
 	$self->{xml_interfaces} = {};
-	
-	my $twig = new XML::Twig( twig_handlers => {
-			'this' => sub {
-				(my $a, my $b) = @_;
-				$self->{xml_interfaces}->{interfaces} =
-					$b->text;
-			},
-			'xmlexport' => sub {
-				(my $a, my $b) = @_;
-				my $c = $b->{att}->{iface};
-				$self->{xml_interfaces}->{$c} = $b->text;
-			}
-		}
-	);
 
-	eval{ $twig->parse( $xml ) };
-	if( $@ ) {
-		croak "Parse error: $@";
-	}
+	$self->parse_twig( $xml, $handlers );
 
 	return 1;
 }
@@ -185,37 +209,44 @@ sub new_writeups {
 
 	$opt{count} = $count	if $count;
 
+	my $handlers = 	{
+		'wu' => sub {
+			(my $a, my $b) = @_;
+			my $wu = {};
+	
+			$wu->{type} = $b->{att}->{wrtype};
+
+			my $c = $b->first_child('e2link');
+			
+			$wu->{title} = $c->text;
+			$wu->{id} = $c->{att}->{node_id};
+
+			$c = $b->first_child('author')->first_child('e2link');
+			$wu->{author} = $c->text;
+			$wu->{author_id} = $c->{att}->{node_id};
+			
+			$c = $b->first_child('parent')->first_child('e2link');
+			$wu->{parent} = $c->text;
+			$wu->{parent_id} = $c->{att}->{node_id};
+			
+			push @{ $self->{writeups} }, $wu;
+		}
+	};
+
+
 	@{ $self->{writeups} } = ();
 
-	$self->parse( 
-		'newwriteups', 
-		{
-			'wu' => sub {
-				(my $a, my $b) = @_;
-				my $wu = {};
-			
-				$wu->{type} = $b->{att}->{wrtype};
-
-				my $c = $b->first_child('e2link');
-			
-				$wu->{title} = $c->text;
-				$wu->{id} = $c->{att}->{node_id};
-
-				$c = $b->first_child('author')->first_child('e2link');
-				$wu->{author} = $c->text;
-				$wu->{author_id} = $c->{att}->{node_id};
-			
-				$c = $b->first_child('parent')->first_child('e2link');
-				$wu->{parent} = $c->text;
-				$wu->{parent_id} = $c->{att}->{node_id};
-			
-				push @{ $self->{writeups} }, $wu;
-			}
-		},
-		%opt
-	);
-
-	return @{ $self->{writeups} };
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'newwriteups',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{writeups} };
+	});
 }
 
 sub other_users {
@@ -225,62 +256,76 @@ sub other_users {
 	my %opt = ( nosort => 1 );
 	$opt{in_room} = $room	if $room;
 	
+	my $handlers = {
+		'user' => sub {
+			(my $a, my $b) = @_;
+			my $user = {};
+		
+			$user->{god}	= $b->{att}->{e2god};
+			$user->{editor}	= $b->{att}->{ce};
+			$user->{edev}	= $b->{att}->{edev};
+			$user->{xp}	= $b->{att}->{xp};
+			$user->{borged}	= $b->{att}->{borged};
+
+			my $c = $b->first_child('e2link');
+			$user->{name}	= $c->text;
+			$user->{id}	= $c->{att}->{node_id};
+
+			if( $c = $b->first_child('room' ) ) {
+				$user->{room} = $c->text;
+				$user->{room_id} = $c->{att}->{node_id};
+			}
+
+			push @{ $self->{users} }, $user;
+		}
+	};
+
+
 	@{ $self->{users} } = ();
 
-	$self->parse(
-		'otherusers',
-		{
-			'user' => sub {
-				(my $a, my $b) = @_;
-				my $user = {};
-			
-				$user->{god}	= $b->{att}->{e2god};
-				$user->{editor}	= $b->{att}->{ce};
-				$user->{edev}	= $b->{att}->{edev};
-				$user->{xp}	= $b->{att}->{xp};
-				$user->{borged}	= $b->{att}->{borged};
-
-				my $c = $b->first_child('e2link');
-				$user->{name}	= $c->text;
-				$user->{id}	= $c->{att}->{node_id};
-
-				if( $c = $b->first_child('room' ) ) {
-					$user->{room} = $c->text;
-					$user->{room_id} = $c->{att}->{node_id};
-				}
-
-				push @{ $self->{users} }, $user;
-			}
-		},
-		%opt
-	);
-
-	return sort { $b->{xp} <=> $a->{xp} } @{$self->{users}};
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'otherusers',
+			$handlers,
+			%opt
+		],
+	sub {
+		return sort { $b->{xp} <=> $a->{xp} } @{$self->{users}};
+	});
 }
 
 sub random_nodes {
 	my $self = shift or croak "Usage: random_nodes E2TICKER";
 
+	my $handlers = {
+		'e2link' => sub {
+			(my $a, my $b) = @_;
+			push @{ $self->{random} }, {
+				title => $b->text,
+				id =>    $b->{att}->{node_id}
+			};
+		},
+		'wit' => sub {
+			(my $a, my $b) = @_;
+			$self->{wit} = $b->text;
+		}
+	};
+
 	@{ $self->{random} } = ();
 
-	$self->parse(
-		'random',
-		{
-			'e2link' => sub {
-				(my $a, my $b) = @_;
-				push @{ $self->{random} }, {
-					title => $b->text,
-					id =>    $b->{att}->{node_id}
-				};
-			},
-			'wit' => sub {
-				(my $a, my $b) = @_;
-				$self->{wit} = $b->text;
-			}
-		}
-	);
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'random',
+			$handlers,
+		],
+	sub {
+		return @{ $self->{random} };
 
-	return @{ $self->{random} };
+	});
 }
 
 sub cool_nodes {
@@ -297,36 +342,43 @@ sub cool_nodes {
 	$opt{limit}		= $count	if $count;
 	$opt{startat}		= $offset	if $offset;
 
+	my $handlers = {
+		'cool' => sub {
+			(my $a, my $b) = @_;
+			my $cool = {};
+			my $c = $b->first_child('writeup')->first_child('e2link');
+
+			$cool->{title}	= $c->text;
+			$cool->{id}	= $c->{att}->{node_id};
+
+			$c = $b->first_child('author')->first_child('e2link');
+
+			$cool->{author}		= $c->text;
+			$cool->{author_id}	= $c->{att}->{node_id};
+
+			$c = $b->first_child('cooledby')->first_child('e2link');
+
+			$cool->{cooledby}	= $c->text;
+			$cool->{cooledby_id}	= $c->{att}->{node_id};
+
+			push @{ $self->{cools} }, $cool;
+		}
+	};
+
+
 	@{ $self->{cools} } = ();
 
-	$self->parse(
-		'coolnodes',
-		{
-			'cool' => sub {
-				(my $a, my $b) = @_;
-				my $cool = {};
-				my $c = $b->first_child('writeup')->first_child('e2link');
-
-				$cool->{title}	= $c->text;
-				$cool->{id}	= $c->{att}->{node_id};
-
-				$c = $b->first_child('author')->first_child('e2link');
-
-				$cool->{author}		= $c->text;
-				$cool->{author_id}	= $c->{att}->{node_id};
-
-				$c = $b->first_child('cooledby')->first_child('e2link');
-
-				$cool->{cooledby}	= $c->text;
-				$cool->{cooledby_id}	= $c->{att}->{node_id};
-
-				push @{ $self->{cools} }, $cool;
-			}
-		},
-		%opt
-	);
-
-	return @{ $self->{cools} };
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'coolnodes',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{cools} };
+	});
 }
 
 sub editor_cools {
@@ -337,31 +389,37 @@ sub editor_cools {
 
 	$opt{count} = $count		if $count;
 
+	my $handlers = {
+		'edselection' => sub {
+			(my $a, my $b) = @_;
+			my $cool = {};
+			my $c = $b->first_child('endorsed');
+
+			$cool->{editor} = $c->text;
+			$cool->{editor_id} = $c->{att}->{node_id};
+
+			$c = $b->first_child('e2link');
+
+			$cool->{title}	= $c->text;
+			$cool->{id}	= $c->{att}->{node_id};
+
+			push @{ $self->{edcools} }, $cool;
+		}
+	};
+
 	@{ $self->{edcools} } = ();
 
-	$self->parse(
-		'edcools',
-		{
-			'edselection' => sub {
-				(my $a, my $b) = @_;
-				my $cool = {};
-				my $c = $b->first_child('endorsed');
-
-				$cool->{editor} = $c->text;
-				$cool->{editor_id} = $c->{att}->{node_id};
-
-				$c = $b->first_child('e2link');
-
-				$cool->{title}	= $c->text;
-				$cool->{id}	= $c->{att}->{node_id};
-
-				push @{ $self->{edcools} }, $cool;
-			}
-		},
-		%opt
-	);
-
-	return @{ $self->{edcools} };
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'edcools',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{edcools} };
+	});
 }
 
 sub time_since {
@@ -370,6 +428,25 @@ sub time_since {
 	my $string = undef;
 
 	my %opt;
+
+	my $handlers = {
+		'now' => sub {
+			(my $a, my $b) = @_;
+			$self->{now} = $b->text;
+		},
+		'user' => sub {
+			(my $a, my $b) = @_;
+			my $user = {};
+
+			my $c = $b->first_child( 'e2link' );
+
+			$user->{time} = $b->{att}->{lasttime};
+			$user->{name} = $c->text;
+			$user->{id} = $c->{att}->{node_id};
+
+			push @{ $self->{timesince} }, $user;
+		}
+	};
 
 	# If they've passed a list of users, determine
 	# whether the list is of usernames or user_ids
@@ -388,34 +465,38 @@ sub time_since {
 
 	@{ $self->{timesince} } = ();
 
-	$self->parse(
-		'timesince',
-		{
-			'now' => sub {
-				(my $a, my $b) = @_;
-				$self->{now} = $b->text;
-			},
-			'user' => sub {
-				(my $a, my $b) = @_;
-				my $user = {};
-
-				my $c = $b->first_child( 'e2link' );
-
-				$user->{time} = $b->{att}->{lasttime};
-				$user->{name} = $c->text;
-				$user->{id} = $c->{att}->{node_id};
-
-				push @{ $self->{timesince} }, $user;
-			}
-		},
-		%opt
-	);
-
-	return @{ $self->{timesince} };
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'timesince',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{timesince} };
+	});
 }
 
 sub available_rooms {
 	my $self = shift or croak "Usage: available_rooms E2TICKER";
+
+	my $handlers = {
+		'outside/e2link' => sub {
+			(my $a, my $b) = @_;
+			@{ $self->{rooms} }[0] = {
+				title	=> $b->text,
+				id	=> $b->{att}->{node_id}
+			};
+		},
+		'roomlist/e2link' => sub {
+			(my $a, my $b) = @_;
+			push @{ $self->{rooms} }, {
+				title	=> $b->text,
+				id	=> $b->{att}->{node_id}
+			};
+		}
+	};
 
 	@{ $self->{rooms} } = ( { title => "outside", id => undef } );
 	
@@ -438,14 +519,23 @@ sub available_rooms {
 			}
 		}
 	);
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'rooms',
+			$handlers
+		],
+	sub {
 
-	# If "go outside" wasn't specified throw exception
+		# If "go outside" wasn't specified, return undef
 
-	if( !defined @{ $self->{rooms} }[0]->{id} ) {
-		return undef;
-	}
+		if( !defined @{ $self->{rooms} }[0]->{id} ) {
+			return undef;
+		}
 
-	return @{ $self->{rooms} };
+		return @{ $self->{rooms} };
+	});
 }
 
 # NOTE: EBU Ticker currently uses a user's setting to determine the
@@ -459,32 +549,38 @@ sub best_users {
 	my %opt;
 	$opt{ebu_noadmins} = 1	if $nogods;
 
+	my $handlers = {
+		'bestuser' => sub {
+			(my $a, my $b) = @_;
+			my $exp = $b->first_child( 'experience' );
+			my $wri = $b->first_child( 'writeups' );
+			my $usr = $b->first_child( 'e2link' );
+			my $lvl = $b->first_child( 'level' );
+				
+			push @{ $self->{bestusers} }, {
+				experience   => $exp->text,
+				writeups     => $wri->text,
+				id           => $usr->{att}->{node_id},
+				user         => $usr->text,
+				level        => $lvl->{att}->{value},
+				level_string => $lvl->text
+			};
+		}
+	};
 
 	@{ $self->{bestusers} } = ();
 	
-	$self->parse(
-		'bestusers',
-		{
-			'bestuser' => sub {
-				(my $a, my $b) = @_;
-				my $exp = $b->first_child( 'experience' );
-				my $wri = $b->first_child( 'writeups' );
-				my $usr = $b->first_child( 'e2link' );
-				my $lvl = $b->first_child( 'level' );
-				
-				push @{ $self->{bestusers} }, {
-					experience   => $exp->text,
-					writeups     => $wri->text,
-					id           => $usr->{att}->{node_id},
-					user         => $usr->text,
-					level        => $lvl->{att}->{value},
-					level_string => $lvl->text
-				};
-			}
-		}, %opt
-	);
-
-	return @{ $self->{bestusers} };
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'bestusers',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{bestusers} };
+	});
 }
 
 sub node_heaven {
@@ -498,25 +594,116 @@ sub node_heaven {
 
 	$opt{visitnode_id} = $node_id	if $node_id;
 
+	my $handlers = {
+		'nodeangel' => sub {
+			(my $a, my $b) = @_;
+			push @{ $self->{heaven} }, {
+				title => $b->{att}->{title},
+				id    => $b->{att}->{node_id},
+				reputation => $b->{att}->{reputation},
+				createtime => $b->{att}->{createtime},
+				text  => $b->text
+			};
+		}
+	};
+
 	@{ $self->{heaven} } = ();
 	
-	$self->parse(
-		'heaven',
-		{
-			'nodeangel' => sub {
-				(my $a, my $b) = @_;
-				push @{ $self->{heaven} }, {
-					title => $b->{att}->{title},
-					id    => $b->{att}->{node_id},
-					reputation => $b->{att}->{reputation},
-					createtime => $b->{att}->{createtime},
-					text  => $b->text
-				};
-			}
-		}, %opt
-	);
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'heaven',
+			$handlers,
+			%opt
+		],
+	sub {
+		return @{ $self->{heaven} };
+	});
+}
 
-	return @{ $self->{heaven} };
+sub maintenance_nodes {
+	my $self = shift	or croak "Usage: maintenance_nodes E2TICKER";
+
+	my $handlers = {
+		'e2link' => sub {
+			(my $a, my $b) = @_;
+			push @{ $self->{maintenance} }, {
+				title	=> $b->text,
+				id	=> $b->{att}->{node_id}
+			};
+		}
+	};
+
+	@{ $self->{maintenance} } = ();
+
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'maintenance',
+			$handlers,
+		],
+	sub {
+		return @{ $self->{maintenance} };
+	});
+}
+
+sub scratch_pad {
+	my $self = shift	or croak "Usage: scratch_pad E2TICKER [, USER ]";
+	my $user_id = shift;
+	my %opt;
+	
+	$opt{scratch} = $user_id	if $user_id;
+
+	my $handlers = {
+		'scratchtxt' => sub {
+			(my $a, my $b) = @_;
+			$self->{scratch} = {
+				text => $b->text,
+				user => $b->{att}->{user},
+				public => $b->{att}->{public}
+			};
+		}
+	};
+
+	$self->{scratch} = {};
+
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'scratch',
+			$handlers,
+			%opt
+		],
+	sub {
+		return $self->{scratch};
+	});
+}
+
+sub raw_vars {
+	my $self = shift	or croak "Usage: raw_vars E2TICKER";
+
+	my $handlers = {
+		'key' => sub {
+			(my $a, my $b) = @_;
+			$self->{vars}->{$b->{att}->{name}} = $b->text;
+		}
+	};
+
+	$self->{vars} = {};
+
+	return $self->thread_then( 
+		[
+			\&parse,
+			$self,
+			'vars',
+			$handlers
+		],
+	sub {
+		return $self->{vars};
+	});
 }
 
 sub interfaces {
@@ -540,7 +727,7 @@ __END__
 
 =head1 NAME
 
-E2::Ticker - A module for fetching L<http://everything2.com>'s New Writeups, Cool Nodes, Editor Cools, Random Nodes, and Other Users tickers.
+E2::Ticker - A module for fetching L<http://everything2.com>'s tickers.
 
 =head1 SYNOPSIS
 
@@ -571,7 +758,7 @@ E2::Ticker - A module for fetching L<http://everything2.com>'s New Writeups, Coo
 
 =head1 DESCRIPTION
 
-This module provides an interface for fetching L<http://everything2.com>'s New Writeups, Cool Nodes, Editor Cools, Random Nodes, and Other Users tickers. It also serves as a base class for other modules that load ticker pages.
+This module provides an interface for fetching L<http://everything2.com>'s New Writeups, Cool Nodes, Editor Cools, Random Nodes, Other Users, Time Since, Available Rooms, Best Users, Node Heaven, Maintenance Nodes, Scratch Pad, and Raw Vars, and Interfaces tickers. It also serves as a base class for other modules that load ticker pages.
 
 =head1 CONSTRUCTOR
 
@@ -603,7 +790,7 @@ The returned hashrefs have the following keys:
 
 Exceptions: 'Unable to process request', 'Parse error:'
 
-=item $ticker-E<gt>other_usersi [ ROOM_ID ]
+=item $ticker-E<gt>other_users [ ROOM_ID ]
 
 This method fetches the Other Users ticker from everything2 and returns a list of hashrefs (sorted by descending XP). If ROOM_ID is specified, only users in the specified room are listed.
 
@@ -667,7 +854,7 @@ The returned hashrefs have the following keys:
 
 Exceptions: 'Unable to process request', 'Parse error:'
 
-=item $ticker-><gt>time_since [ USER_LIST ]
+=item $ticker-E<gt>time_since [ USER_LIST ]
 
 This method fetches the Time Since ticker and returns a list of values. If USER_LIST is not specified, it returns a list with one value, that corresponding to the currently-logged-in user.
 
@@ -733,6 +920,33 @@ If NODE_ID is specified, the additional key will be included:
 
 Exceptions: 'Unable to process request', 'Parse error:'
 
+=item $ticker-E<gt>maintenance_nodes
+
+This method returns a list of maintenance nodes (example: "E2 Nuke Request"). It returns a list of hashrefs with the following keys:
+
+	title	# Title of node
+	id	# node_id of node
+
+Exceptions: 'Unable to process request', 'Parse error:'
+
+=item $ticker-E<gt>scratch_pad [ USER_ID ]
+
+This method returns the content of a user's scratch pad. If USER_ID is specified, it returns that user's scratch pad, otherwise it returns the currently-logged-in user's scratch pad.
+
+It returns a hashref with the following keys:
+
+	user	# Username
+	public	# Boolean: Is this scratchpad pubically shared?
+	text	# The text of the scratchpad
+
+Exceptions: 'Unable to process request', 'Parse error:'
+
+=item $ticker-E<gt>raw_vars
+
+This method returns a hashref to the current user's "raw vars" hash on E2. It consists of a number of key/value pairs.
+
+Exceptions: 'Unable to process request', 'Parse error:'
+
 =item $ticker-E<gt>load_interfaces
 
 This method loads the site-independant list of ticker nodes. E2::Ticker holds its own default list, but extremely paranoid clients can call C<load_interface> to make sure it's using the up-to-date list of ticker interfaces.
@@ -763,6 +977,8 @@ L<E2::Interface>,
 L<E2::Search>,
 L<E2::Usersearch>,
 L<E2::Message>,
+L<E2::Session>,
+L<E2::ClientVersion>,
 L<http://everything2.com>,
 L<http://everything2.com/?node=clientdev>
 

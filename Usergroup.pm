@@ -1,6 +1,6 @@
 # E2::Usergroup
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 04 May 2003
 #
 # See bottom for pod documentation.
 
@@ -14,7 +14,7 @@ use Carp;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 
 # Prototypes
 
@@ -39,7 +39,7 @@ sub new {
 
 	# See clear for the other members of $self
 
-	bless( $self, $class );
+	$self->clear;
 	return $self;
 }
 

@@ -1,6 +1,6 @@
 # E2::Message
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 14 May 2003
 #
 # See bottom for pod documentation.
 
@@ -12,9 +12,10 @@ use warnings;
 use Carp;
 
 use E2::Ticker;
+use E2::Node;	# for set_room
 
 our @ISA 	= "E2::Ticker";
-our $VERSION	= "0.21";
+our $VERSION	= "0.30";
 
 our %room_name_to_id  = (
 	"outside"		=> undef, # 1102338,
@@ -89,13 +90,7 @@ sub list_public {
 	$opt{msglimit}	= $self->{msglimit} if $self->{msglimit};
 	$opt{for_node}	= $self->{room_id}  if $self->{room_id};
 	
-	# Set the internal _msglimit value to public's msglimit
-	
-	$self->{_msglimit} = $self->{msglimit};
-	my @m = $self->list_messages( %opt );
-	$self->{msglimit} = $self->{_msglimit};
-	
-	return @m;
+	return $self->list_messages( \$self->{msglimit}, %opt );
 }
 
 sub list_private {
@@ -108,17 +103,12 @@ sub list_private {
 	$opt{for_node}	= "me";
 	$opt{drop_archived} = 1			if $drop_archived;
 
-	# Set the internal _msglimit value to private's msglimit
-
-	$self->{_msglimit} = $self->{p_msglimit};
-	my @m = $self->list_messages( %opt );
-	$self->{p_msglimit} = $self->{_msglimit};
-	
-	return @m;
+	return $self->list_messages( \$self->{p_msglimit}, %opt );
 }
 
 sub list_messages {
-	my $self = shift	or croak "Usage: messages E2MESSAGE [ OPTIONS ]";
+	my $self = shift	or croak "Usage: list_messages E2MESSAGE, MSGLIMIT [, OPTIONS ]";
+	my $msglimit = shift	or croak "Usage: list_messages E2MESSAGE, MSGLIMIT [, OPTIONS ]";
 	my %opt = @_;
 	my $drop_archived;
 
@@ -127,89 +117,100 @@ sub list_messages {
 		$drop_archived = 1;
 	}
 
+	my $handlers = {
+		'messages/topic' => sub { 
+			(my $a, my $b) = @_;
+			$self->{topic} = $b->text;
+		},
+		'messages/room' => sub {
+			(my $a, my $b) = @_;
+			$self->{room} =  $b->text;
+			$self->{room_id} = $b->{att}->{room_id}
+		},
+		'messages/msglist/msg' => sub {
+			(my $a, my $b) = @_;
+			my $m = {};
+
+			$m->{id}     = $b->{att}->{msg_id};
+			$m->{time}   = $b->{att}->{msg_time};
+
+			# Set 'author' and 'author_id' if they exist
+
+			if( my $f = $b->first_child('from') ) {
+				$m->{author} = $f->first_child('e2link')->text;
+				$m->{author_id} = $f->first_child('e2link')->
+					{att}->{node_id};
+			}
+
+			$m->{archive} = $b->{att}->{archive};
+			
+			$m->{text} = $b->first_child('txt')->text;
+
+			# Do group stuff if this is a group message
+
+			if( my $g = $b->first_child( 'grp' ) ) {
+				$m->{group} = $g->first_child('e2link')->text;
+				$m->{group_id} = $g->first_child('e2link')->
+					{att}->{node_id};
+				$m->{grouptype} = $g->{att}->{type};
+			}
+
+			if( !$$msglimit || $m->{id} > $$msglimit ) {
+				$$msglimit = $m->{id};
+			}
+
+			# Don't store if we're dropping archived AND
+			# this message is archived.
+
+			if( $drop_archived && $m->{archive} ) {
+				return;
+			}
+
+			push @{ $self->{_messages} }, $m;
+		}		
+	};
+
 	@{ $self->{_messages} } = ();
 	$self->{topic} = undef;
 	$self->{room} = undef;
 	$self->{room_id} = undef;
 	
-	$self->parse(
-		'messages',
-		{
-			'messages/topic' => sub { 
-				(my $a, my $b) = @_;
-				$self->{topic} = $b->text;
-			},
-			'messages/room' => sub {
-				(my $a, my $b) = @_;
-				$self->{room} =  $b->text;
-				$self->{room_id} = $b->{att}->{room_id}
-			},
-			'messages/msglist/msg' => sub {
-				(my $a, my $b) = @_;
-				my $m = {};
-
-				$m->{id}     = $b->{att}->{msg_id};
-			
-				# Set 'author' and 'author_id' if they exist
-
-				if( my $f = $b->first_child('from') ) {
-					$m->{author} = $f->first_child('e2link')->text;
-					$m->{author_id} = $f->first_child('e2link')->
-						{att}->{node_id};
-				}
-
-				$m->{archive} = $b->{att}->{archive};
-			
-				$m->{text} = $b->first_child('txt')->text;
-
-				# Do group stuff if this is a group message
-
-				if( my $g = $b->first_child( 'grp' ) ) {
-					$m->{group} = $g->first_child('e2link')->text;
-					$m->{group_id} = $g->first_child('e2link')->
-						{att}->{node_id};
-					$m->{grouptype} = $g->{att}->{type};
-				}
-
-				if( !$self->{_msglimit} || $m->{id} > $self->{_msglimit} ) {
-					$self->{_msglimit} = $m->{id};
-				}
-
-				# Don't store if we're dropping archived AND
-				# this message is archived.
-
-				if( $drop_archived && $m->{archive} ) {
-					return;
-				}
-
-				push @{ $self->{_messages} }, $m;
-			}		
-		},
-		%opt
-	);
-	
-	return sort { $a->{id} <=> $b->{id} } @{ $self->{_messages} };
+	return $self->thread_then(
+		[
+			\&E2::Ticker::parse,
+			$self,
+			'messages',
+			$handlers,
+			%opt
+		],
+	sub {
+		return sort { $a->{id} <=> $b->{id} } @{ $self->{_messages} };
+	});
 }
 
 sub send {
 	my $self = shift		or croak "Usage: send E2MESSAGE, MESSAGE_TEXT";
 	my $message = shift		or croak "Usage: send E2MESSAGE, MESSAGE_TEXT";
 	
-	my $response = $self->process_request(
-				op		=> "message",
-				message		=> $message
-		       );
-
-	if( !$response ) { return undef };
-
-	# FIXME: Check to see if message was really sent.
+	return undef	if !$self->logged_in;
 	
-	return 1;
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			op	=> "message",
+			message	=> $message
+		],
+	sub {
+		return 1;	# FIXME
+	});
 }
-
+	
 sub set_room {
 	my $self = shift	or croak "Usage: set_room E2MESSAGE, ROOM_NAME";
 	my $room = shift	or croak "Usage: set_room E2MESSAGE, ROOM_NAME";
+
+	return undef	if !$self->logged_in;
 
 	$room = lc( $room );
 	
@@ -218,36 +219,34 @@ sub set_room {
 	if( lc($self->{room}) eq $room ) {
 		return 0;
 	}
-	
-	my $room_id = $room_name_to_id{$room};
-	
-	# If %room_name_to_id didn't contain $room, fetch it from e2
 
-	if( !$room_id ) {
-		$room_id = $self->find_node_id( $room, 'room' );
-		if( !$room_id ) { return undef; }
-	}
+	# Change rooms
 
-	# Now that we have the room_id, try to change rooms
-	
-	my $response = $self->process_request( node_id => $room_id );
-	
-	if( $response ) {
-		# FIXME: This assumes room_id is a valid room and
-		#        we have permission to enter. Prolly shouldn't.
+	my $n = new E2::Node;
+	$n->clone( $self );
 
-		$self->{room} = $room;
-		$self->{room_id} = $room_id;
-		$self->{topic} = undef;
-		$self->{msglimit} = undef;
+	return $self->thread_then( 
+		[
+			\&E2::Node::load,
+			$n,
+			$room,
+			'room'
+		],
+	sub {
+		if( (!$n->type) || $n->type ne 'room' ) {
+			return undef;
+		}
+	
+		$self->{room}		= $n->title;
+		$self->{room_id}	= $n->node_id;
+		$self->{topic}		= $n->topic;
+		$self->{msglimit}	= undef;
+
 		return 1;
-	}
-
-	return undef;
+	});
 }
 
 sub blab {
-
 	my $self    = shift	or croak "Usage: blab E2MESSAGE, USER_ID, TEXT [ , CC_BOOL ]";
 	my $user_id = shift	or croak "Usage: blab E2MESSAGE, USER_ID, TEXT [ , CC_BOOL ]";
 	my $text    = shift	or croak "Usage: blab E2MESSAGE, USER_ID, TEXT [ , CC_BOOL ]";
@@ -255,38 +254,63 @@ sub blab {
 
 	my %request;
 
+	return undef	if ! $self->logged_in;
+
 	$request{node_id} = $user_id;
 	$request{"msguser_$user_id"} = $text;
 
 	if( $cc ) {
-		if( !$self->{user_id} ) {
-			$self->update_session;
+		if( !$self->this_user_id ) {
+
+			return $self->thread_then(
+				[
+					\&E2::Interface::verify_login,
+					$self
+				],
+			sub {
+				return undef	if !$self->this_user_id;
+
+				$request{"ccmsguser_$self->{user_id}"} = 1;
+
+				return process_request( %request );
+			});
 			
-			if( !$self->{user_id} ) { return undef; }
+		} else {
+			$request{"ccmsguser_$self->{user_id}"} = 1
 		}
-
-		$request{"ccmsguser_" . $self->{user_id}} = 1;
 	}
-	
-	my $response = $self->process_request( %request );
 
-	# FIXME: Test for success.
+	return $self->process_request( %request );
+}
 
-	return 1;
+sub archive {
+	my $self = shift	or croak "Usage: archive E2MESSAGE, MSG_ID";
+	my $msg_id = shift	or croak "Usage: archive E2MESSAGE, MSG_ID";
+
+	return $self->process_request(
+		"archive_$msg_id"	=> 'yup',
+		op			=> 'message'
+	);
+}
+
+sub unarchive {
+	my $self = shift	or croak "Usage: unarchive E2MESSAGE, MSG_ID";
+	my $msg_id = shift	or croak "Usage: unarchive E2MESSAGE, MSG_ID";
+
+	return $self->process_request(
+		"unarchive_$msg_id"	=> 'yup',
+		op			=> 'message'
+	);
 }
 
 sub delete {
 	my $self = shift	or croak "Usage: delete E2MESSAGE, MSG_ID";
 	my $msg_id = shift	or croak "Usage: delete E2MESSAGE, MSG_ID";
 
-	my $response = $self->process_request( 
+	return $self->process_request( 
 		"deletemsg_$msg_id"	=> "yup",
 		op			=> "message"
 	);
-
-	# FIXME: Test for success.
-	
-	return 1;
 }
 
 1;
@@ -384,6 +408,7 @@ C<list_private> fetches and returns any private messages that have been posted s
 	id		# Id of message
 	time		# Timestamp of message
 	text		# Text of the message
+	archive		# Boolean: Is this message archived?
 
 	# The following only exist for
 	# group messages
@@ -415,6 +440,14 @@ Exceptions: 'Unable to process request'
 C<blab> sends the private "blab" message MESSAGE_TEXT to user_id RECIPIANT_ID. Returns true on success and C<undef> on failure.
 
 Exceptions: 'Unable to process request'
+
+=item $catbox-E<gt>archive MESSAGE_ID
+
+C<archive> attempts to archive the private message with the id MESSAGE_ID.
+
+=item $catbox-E<gt>unarchive MESSAGE_ID
+
+C<unarchive> attempts to unarchive the private message with the id MESSAGE_ID.
 
 =item $catbox-E<gt>delete MESSAGE_ID
 

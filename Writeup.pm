@@ -1,6 +1,6 @@
 # E2::Writeup
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 March 2003
+# 04 May 2003
 #
 # See bottom for pod documentation.
 
@@ -10,12 +10,12 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use XML::Twig;
+use HTML::Entities;
 
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.21";
+our $VERSION = "0.30";
 
 # Prototypes
 
@@ -51,7 +51,7 @@ sub new {
 
 	# See clear for the other members of $self
 
-	bless( $self, $class );
+	$self->clear;
 	return $self;
 }
 
@@ -67,7 +67,7 @@ sub clear {
 	$self->{text}		= undef;
 	$self->{cool_count}	= 0;
 
-	%{ $self->{rep} }	= {};	# Hash with the following keys:
+	$self->{rep}		= {};	# Hash with the following keys:
 					#	o up
 					#	o down
 					#	o total
@@ -96,8 +96,6 @@ sub parse {
 	$self->{node_id}	= $b->{att}->{node_id};
 	$self->{createtime}	= $b->{att}->{createtime};
 	$self->{marked}		= $b->{att}->{marked};
-	$self->{text}		= $b->{att}->{doctext};
-	
 	$self->{wrtype}		= $b->first_child('writeuptype')->text;
 	
 	my $c			= $b->first_child('parent')->first_child('e2link');
@@ -111,7 +109,9 @@ sub parse {
 	$self->{author_id}	= $c->{att}->{user_id};
 
 	$c			= $b->first_child('doctext');
-	if( $c )	 	{ $self->{text} = $c->text; }
+	if( $c ) { 
+		$self->{text} = decode_entities( $c->text );
+	}
 
 	$c			= $b->first_child('reputation');
 	if( $c ) {
@@ -155,13 +155,18 @@ sub cool {
 	if( !$self->logged_in ) { return undef; }
 	if( !$node_id )		{ return undef; }
 
-	my $r = $self->process_request(
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
 			node_id => $node_id,
 			op	=> "cool",
 			displaytype => "xmltrue"
-	        );
-
-	return 1;
+		],
+	sub {
+		# FIXME: add check
+		return 1;
+	});
 }
 
 sub update {
@@ -196,20 +201,24 @@ sub update {
 
 	# Request
 
-	my $response = $self->process_request(
-				node_id 	=> $self->{node_id},
-				writeup_wrtype_writeuptype => $type,
-				displaytype	=> "xmltrue",
-				writeup_doctext	=> $text
-		       );
+	$self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			node_id 	=> $self->{node_id},
+			writeup_wrtype_writeuptype => $type,
+			displaytype	=> "xmltrue",
+			writeup_doctext	=> $text
+		],
+	sub {
+		my $r = shift;
 
-	if( !($response =~ /<node /s ) ) {
-		return undef;
-	}
+		if( !($r =~ /<node /s ) ) {
+			return undef;
+		}
 
-	return $self->load_from_xml( $response );
-
-	croak "Invalid document";
+		return $self->load_from_xml( $r );
+	});
 }
 
 #---------------
