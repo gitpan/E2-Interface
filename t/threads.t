@@ -3,7 +3,7 @@ use E2::Interface;
 
 if( $E2::Interface::THREADED ) {
 	ok( my $i = new E2::Interface );
-	ok( $i->use_threads( 3 ) );
+	ok( $i->use_threads( 5 ) );
 	ok( $i->join_threads == () );
 } else {
 	ok( 1 );

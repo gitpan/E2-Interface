@@ -89,9 +89,15 @@ sub list_public {
 	
 	warn "E2::Message::list_public\n"	if $DEBUG > 1;
 
-	if( $self->{_list_public_lock} ) { return () }
-	$self->{_list_public_lock} = 1;
+	# We need to lock list_public, because there is a re-entrance issue
+	# with msglimit (if we call this method a second time before the
+	# first has completed, we'll have two list_publics with the same
+	# msglimit, which means any messages retrieved will be retrieved
+	# twice).
 
+	return () if $self->{__lock_list_public};
+	$self->{__lock_list_public} = 1;
+	
 	$opt{nosort}	= 1;
 	$opt{backtime}	= 10;
 	$opt{msglimit}	= $self->{msglimit} if $self->{msglimit};
@@ -155,11 +161,8 @@ sub list_public {
 			[],		# It'll be more efficient to not pass
 			%opt		# @list back and forth, so just pass a
 		],			# dummy value.
-		sub {
-			delete $self->{_list_public_lock};
-			return sort { $a->{id} <=> $b->{id} } @list;
-			
-		}
+		sub { return sort { $a->{id} <=> $b->{id} } @list }, # POST
+		sub { delete $self->{__lock_list_public}          }  # FINISH
 	);	
 }
 
@@ -170,10 +173,10 @@ sub list_private {
 	my %opt;
 	
 	warn "E2::Message::list_private\n"	if $DEBUG > 1;
-	
-	if( $self->{_list_private_lock} ) { return () }
-	$self->{_list_private_lock} = 1;
-	
+
+	return () if $self->{__lock_list_private};
+	$self->{__lock_list_private} = 1;
+
 	$opt{msglimit}	= $self->{p_msglimit}	if $self->{p_msglimit};
 	$opt{for_node}	= "me";
 
@@ -234,10 +237,8 @@ sub list_private {
 			[],		# It'll be more efficient to not pass
 			%opt		# @list back and forth, so just pass a
 		],			# dummy value.
-		sub {
-			delete $self->{_list_private_lock};
-			return sort { $a->{id} <=> $b->{id} } @list;
-		}
+		sub { return sort { $a->{id} <=> $b->{id} } @list }, # POST
+		sub { delete $self->{__lock_list_private}         }  # FINISH
 	);	
 }
 
@@ -269,7 +270,10 @@ sub set_room {
 	my $room = shift	or croak "Usage: set_room E2MESSAGE, ROOM_NAME";
 
 	warn "E2::Message::set_room\n"	if $DEBUG > 1;
-	
+
+	return undef if $self->{__lock_set_room};
+	$self->{__lock_set_room} = 1;
+
 	if( ! $self->logged_in ) {
 		warn "Unable to set room message: not logged in" if $DEBUG;
 		return undef;
@@ -287,9 +291,6 @@ sub set_room {
 
 	our $n = new E2::Node;
 	$n->clone( $self );
-
-
-	$self->{room_lock} = 1;
 	
 	return $self->thread_then( 
 		[
@@ -308,7 +309,7 @@ sub set_room {
 		$self->{topic}		= $n->description;
 		$self->{msglimit}	= undef;
 
-		delete $self->{room_lock};
+		delete $self->{__lock_set_room};
 		
 		return 1;
 	});

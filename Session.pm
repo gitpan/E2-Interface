@@ -1,6 +1,6 @@
 # E2::Session
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 29 June 2003
 #
 # See bottom for pod documentation.
 
@@ -13,7 +13,7 @@ use Carp;
 
 use E2::Ticker;
 
-our $VERSION = "0.32";
+our $VERSION = "0.33";
 our @ISA = qw(E2::Ticker);
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
@@ -129,8 +129,8 @@ sub update {
 	my $handlers = {
 		'currentuser' => sub {
 			(my $a, my $b) = @_;
-			$self->{this_username} = $b->text;
-			$self->{this_user_id}  = $b->{att}->{user_id};
+			${$self->{this_username}} = $b->text;
+			${$self->{this_user_id}}  = $b->{att}->{user_id};
 		},
 		'servertime' => sub {
 			(my $a, my $b) = @_;

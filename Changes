@@ -1,5 +1,48 @@
 Revision history for Perl extension e2interface.
 
+0.33 Sun Jul 20 2003
+			- Resolved a problem with E2::Interface::parse_twig
+			  and unicode, so we no longer have to strip unicode
+			  to avoid parse errors.
+			  
+			- Updated E2::Interface::post_process to leave unicode
+			  intact--this also removes the requirement for
+			  Unicode::String. Also modified the demoronizer to
+			  convert nonstandard Microsoft encoding to html
+			  entities.
+
+			- Fixed a bug that caused E2::E2Node::get_my_writeup
+			  to often return undef even if the user has a
+			  writeup in the selected node.
+
+			- Various fixes to E2::UserSearch::compare (added a
+			  couple new keys, fixed a bug that terminated
+			  execution).
+
+			- Added softlink parameter to E2::Node::load and
+			  E2::Node::load_by_id.
+
+			- Removed 'TYPE' parameter in E2::Node::load_by_id
+			  and E2::Node::load_from_xml, because, basically,
+			  it didn't make any sense.
+
+			- Changed a bunch of use()s to require()s in
+			  E2::Interface so use_threads runs much, much faster
+			  if called early.
+
+			- Added a third parameter to E2::Interface::thread_then
+			  to allow a piece of code to be run after the deferred
+			  method finishes, regardless of whether exceptions
+			  were thrown.
+
+			- Fixed a couple bugs in E2::Interface::finish that
+			  were causing strange behaviour when it was called
+			  without a specified job.
+
+			- Added a workaround to the various e2 xmltrue exports
+			  that don't in fact escape fields that they should be
+			  escaping (E2::Interface::post_process)
+			
 0.32 Wed Jun 18 2003
 			- Removed E2::Ticker::scratch_pad and created
 			  E2::Scratchpad, adding the ability to update

@@ -1,6 +1,6 @@
 # E2::Writeup
 # Jose M. Weeks <jose@joseweeks.com>
-# 18 June 2003
+# 23 June 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,7 @@ use HTML::Entities;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.32";
+our $VERSION = "0.33";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -99,24 +99,27 @@ sub parse {
 	# $b is an XML::Twig
 
 	$self->{node_id}	= $b->{att}->{node_id};
-	$self->{createtime}	= $b->{att}->{createtime};
+	$self->{createtime}	= $self->decode_xml( $b->{att}->{createtime} );
 	$self->{marked}		= $b->{att}->{marked};
 	$self->{wrtype}		= $b->first_child('writeuptype')->text;
-	
+				
 	my $c			= $b->first_child('parent')->
 					first_child('e2link');
-	$self->{parent}		= $c->text;
+
+	$self->{parent}		= $self->decode_xml( $c->text );
 	$self->{parent_id}	= $c->{att}->{node_id};
 
-	$self->{title}   	= $b->first_child('title')->text;
+	$self->{title}   	= $self->decode_xml(
+					$b->first_child('title')->text
+				  );
 
 	$c 			= $b->first_child('author');
-	$self->{author}		= $c->text;
+	$self->{author}		= $self->decode_xml( $c->text );
 	$self->{author_id}	= $c->{att}->{user_id};
 
 	$c			= $b->first_child('doctext');
 	if( $c ) { 
-		$self->{text} = decode_entities( $c->text );
+		$self->{text} = $self->decode_xml($c->text);
 	}
 
 	$c			= $b->first_child('reputation');
@@ -133,7 +136,7 @@ sub parse {
 	if( my $cools = $b->first_child('cools') ) {
 		foreach my $d ( $cools->children('e2link') ) {
 			push @{ $self->{cools} }, {
-				name => $d->text, 
+				name => $self->decode_xml( $d->text ),
 				id   => $d->{att}->{node_id} 
 			};
 			$self->{cool_count}++;
@@ -327,20 +330,18 @@ sub update {
 			$self,
 			node_id 	=> $self->node_id,
 			writeup_wrtype_writeuptype => $type,
-		#	displaytype	=> "xmltrue",
+			displaytype	=> "xmltrue",
 			sexisgood	=> "submit",
 			writeup_doctext	=> $text
 		],
 	sub {
 		my $r = shift;
 
-#		if( !($r =~ /<node /s ) ) {
-#			return undef;
-#		}
-#
-#		return $self->load_from_xml( $r );
+		if( !($r =~ /<node /s ) ) {
+			return undef;
+		}
 
-		return 1;
+		return $self->load_from_xml( $r );
 	});
 }
 

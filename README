@@ -1,4 +1,4 @@
-e2interface/0.32
+e2interface/0.33
 ================
 
 e2interface is a client library for the everything2.com collaborative database.
@@ -24,7 +24,7 @@ This module requires these other modules and libraries:
 
   Perl 5.006
   System libraries: expat
-  Perl modules:     XML::Twig, LWP, and Unicode::String
+  Perl modules:     XML::Twig and LWP
 
 To use this module's built-in threading capabilities, the
 following is required as well:

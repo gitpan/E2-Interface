@@ -1,6 +1,6 @@
 # E2::UserSearch
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 06 July 2003
 #
 # See bottom for pod documentation.
 
@@ -14,7 +14,7 @@ use Carp;
 use E2::Ticker;
 use E2::Writeup;
 
-our $VERSION = "0.32";
+our $VERSION = "0.33";
 our @ISA = qw(E2::Ticker);
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
@@ -274,15 +274,18 @@ sub compare {
 	my %map;
 
 	foreach( @{$old->{writeups}} ) {
-		$map{$_->id} = $_;
+		$map{$_->node_id} = $_;
 	}
 
 	foreach( $self->sort_results( 'rep' ) ) {
 
 		my $writeup = {
-			title	=> $_->title,
-			rep	=> $_->rep,
-			cools	=> $_->cool_count
+			title	  => $_->title,
+			node_id   => $_->node_id,
+			parent    => $_->parent,
+			parent_id => $_->parent_id,
+			rep	  => $_->rep,
+			cools	  => $_->cool_count
 		};
 
 		# Get stats
@@ -489,6 +492,9 @@ This method compares this E2::UserSearch with another, returning a list of hashr
 
 	title		# Title of the writeup
 	node_id		# node_id of the writeup
+	parent		# Title of the writeup's parent
+	parent_id	# node_id of the writeup's parent
+
 	rep		# Hashref with the keys: up, down, total, and cast
 	cools		# C! count
 

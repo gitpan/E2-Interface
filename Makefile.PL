@@ -11,7 +11,6 @@ WriteMakefile(
     'PREREQ_PM'		=> {
     				'LWP' 			=> 0,
     				'XML::Twig'		=> 0,
-				'Unicode::String'	=> 0 
 			   },
     ($] >= 5.005 ?    ## Add these new keywords supported since 5.005
       (ABSTRACT_FROM => 'Interface.pm', # retrieve abstract from module

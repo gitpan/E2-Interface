@@ -1,6 +1,6 @@
 # E2::E2Node
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 03 July 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,7 @@ use E2::Node;
 use E2::Writeup;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.32";
+our $VERSION = "0.33";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -153,9 +153,13 @@ sub twig_handlers {
 			$wu->clone( $self );
 			$wu->parse( $b );
 
+			my $name = $self->this_username;
+			my $uid = $self->this_user_id;
+			
 			if( $self->logged_in &&
-			     $self->{this_user_id} == $wu->author_id ) {
-				$self->{mine} = $$self->writeups;
+				($uid ?	$uid == $wu->author_id :
+					lc($name) eq lc($wu->author)) ) {
+				$self->{mine} = @{ $self->{writeups} };
 			}
 
 			push @{ $self->{writeups} }, $wu;
@@ -230,7 +234,7 @@ sub get_my_writeup {
 	my $self = shift	or croak "Usage: get_my_writeup E2E2NODE";
 	my $i = $self->{mine};
 
-	if( !$i ) { return undef; }
+	if( ! defined $i ) { return undef; }
 
 	return $self->{writeups}[$i];
 }
@@ -280,12 +284,9 @@ sub create {
 			croak "Invalid document";
 		}
 
-		if( $1 == $self->this_user_id ) {
-			load_from_xml( $r );
-			return 1;
-		}
+		$self->load_from_xml( $r );
 
-		return 0;
+		return $self->exists;
 	});
 }
 
@@ -426,7 +427,9 @@ C<clear> clears all the information currently stored in $node.
 
 =item $node-E<gt>is_locked
 
-These methods return either true or false to the respective questions "Does this node have a writeup by me in it?" and "Is this node softlocked?" These return C<undef> if there is no node currently loaded.
+Boolean: "Does this node have a writeup by me in it?"; "Is this node softlocked?"
+
+C<is_locked> is actually a string value, if true, consisting of the text of the softlock.
 
 =item $node-E<gt>list_softlinks
 
@@ -434,7 +437,9 @@ These methods return either true or false to the respective questions "Does this
 
 =item $node-E<gt>list_sametitles
 
-These methods each return a list of hashrefs. C<list_softlinks> and C<list_firmlinks> return hashrefs with the keys "title" and "id". C<list_sametitles>, which deals with the "'x' is also a: user / room / etc.", has the additional key of "type".
+These methods return a list of softlinks, firmlinks, or sametitles.
+
+They each return a list of hashrefs. C<list_softlinks> and C<list_firmlinks> return hashrefs with the keys "title" and "id". C<list_sametitles>, which deals with the "'x' is also a: user / room / etc.", has the additional key of "type".
 
 These return empty lists if the current node has none of the respective softlinks, firmlinks, or sametitles, or C<undef> if there is no node currently loaded.
 
@@ -482,7 +487,9 @@ Exceptions: 'Unable to process request'
 
 =item $node-E<gt>create TITLE
 
-C<create> creates a new node (a "nodeshell") of title TITLE, then loads this new node. It returns true on success (to determine success, it checks whether the node was created by the user in question, and whether the node has zero writeups, so if you attempt to C<create> a nodeshell that you've already created and that hasn't yet been filled, this method will still return true). It returns 0 on failure and C<undef> if the user is currently not logged in.
+C<create> creates a new node (a "nodeshell") of title TITLE, then loads this new node.
+
+It returns true if the created node now exists. Otherwise returns C<undef>.
 
 Exceptions: 'Unable to process request', 'Invalid document'
 

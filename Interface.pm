@@ -1,6 +1,6 @@
 # E2::Interface
 # Jose M. Weeks <jose@joseweeks.com>
-# 18 June 2003
+# 20 July 2003
 #
 # See bottom for pod documentation.
 
@@ -9,16 +9,18 @@ package E2::Interface;
 use 5.006;
 use strict;
 use warnings;
-use Exporter;
 use Carp;
-use LWP::UserAgent;
-use HTTP::Request::Common qw(GET HEAD POST);
-use HTTP::Cookies;
-use URI::Escape;
-use Unicode::String;
-use XML::Twig;
 
-use E2::Ticker;
+our $VERSION = "0.33";
+
+# This module also require()s the following modules in the body of
+# certain methods (threading loads faster this way than with use.
+# 	XML::Twig
+# 	LWP::UserAgent;
+#	HTTP::Request::Common qw(GET HEAD POST);
+#	HTTP::Cookies;
+#	URI::Escape;
+#	E2::Ticker;
 
 # Threading, if supported
 
@@ -28,12 +30,17 @@ eval "
 	use Thread::Queue;
 ";
 our $THREADED = !$@;
+
+# Unicode
+
+eval "
+	use Encode;
+";
+our $ENCODED = !$@;
+
 our $DEBUG	= 0;	# Debug info: set to 1 for basic debug info,
 			#             2 to add a message for each sub,
 			#             3 to add data dumping
-our $VERSION = "0.32";
-our @ISA = ("Exporter");
-our @EXPORT = qw($DEBUG);
 
 # Get OS string
 
@@ -79,6 +86,8 @@ sub debug;
 sub this_username;
 sub this_user_id;
 
+sub decode_xml;
+
 sub use_threads;
 sub job_id;
 sub thread_then;
@@ -95,18 +104,17 @@ sub process_request_raw;
 # Class methods
 ################################################################################
 
-sub version {
-	return $VERSION;
-}
-
-sub client_name {
-	return "e2interface-perl";
+sub version	{ return $VERSION }
+sub client_name	{ return "e2interface-perl" }
+sub decode_xml	{
+	my( undef, $s ) = @_;
+	return $s if !$ENCODED;
+	return decode_utf8($s) || $s;
 }
 
 sub debug {
-	my $d = shift;         # E2::Interface::debug(1) or $e2->debug(1) ?
-	$d = shift if ref($d);
-	
+	my (undef, $d) = @_;
+
 	if( $d && !$DEBUG ) {
 
 		# Print e2interface info
@@ -147,7 +155,8 @@ sub new {
 	$self->{next_job_id}	= \(my $tb = 1);
 	$self->{job_to_thread}	= \(my $tc);
 	$self->{post_commands}	= \(my $td);
-	$self->{finished}	= \(my $te);
+	$self->{final_commands} = \(my $te);
+	$self->{finished}	= \(my $tf);
 	
 	return bless $self, $class;
 }
@@ -172,6 +181,7 @@ sub clone {
 	$self->{next_job_id}	= $src->{next_job_id};
 	$self->{job_to_thread}	= $src->{job_to_thread};
 	$self->{post_commands}	= $src->{post_commands};
+	$self->{final_commands}	= $src->{final_commands};
 	$self->{finished}	= $src->{finished};
 	
 	return $self;
@@ -183,6 +193,8 @@ sub login {
 	my $password = shift		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
 
 	warn "E2::Interface::login\n"		if $DEBUG > 1;
+
+	require E2::Ticker;
 
 	return $self->thread_then(
 		[ 
@@ -209,6 +221,8 @@ sub login {
 
 sub verify_login {
 	my $self = shift;
+	
+	require E2::Ticker;
 
 	warn "E2::Interface::verify_login\n"	if $DEBUG > 1;
 
@@ -346,17 +360,27 @@ sub document {
 
 sub parse_twig {
 	if( @_ != 3 ) { croak "Usage: parse_twig E2INTERFACE, XML, HANDLERS"; }
+	my ( $self, $xml, $handlers ) = @_;
 	
+	require XML::Twig;
+
 	warn "E2::Interface::parse_twig\n"	if $DEBUG > 1;
 
-	my ( $self, $xml, $handlers ) = @_;
-
 	my $twig = new XML::Twig(
-		keep_encoding => 1, 
+#		keep_encoding => 1, 
 		twig_handlers => $handlers
 	);
-	
-	if( !$twig->safe_parse( $xml ) ) {
+
+	# If we're using a version of perl that allows us to do it, make sure
+	# the string is in perl's internal representation, then encode into
+	# UTF8.
+
+	if( $ENCODED ) {
+		$xml = decode_utf8( $xml ) || $xml;
+		$xml = encode_utf8( $xml );
+	} 
+
+	if( !$twig->safe_parse( $xml, ProtocolEncoding => 'UTF-8' ) ) {
 		chomp $@;
 		croak "Parse error: $@";
 	}
@@ -503,11 +527,12 @@ sub join_threads {
 
 	# Dismantle the threading
 
-	$self->{threads}	= \(my $ta);
-	$self->{next_job_id}	= \(my $tb = 1);
-	$self->{job_to_thread}	= \(my $tc);
-	$self->{post_commands}	= \(my $td);
-	$self->{finished}	= \(my $te);
+	${$self->{threads}}		= undef;
+	${$self->{next_job_id}}		= undef;
+	${$self->{job_to_thread}}	= undef;
+	${$self->{post_commands}}	= undef;
+	${$self->{final_commands}}	= undef;
+	${$self->{finished}}		= undef;
 
 	return @r;
 }
@@ -527,12 +552,13 @@ sub detach_threads {
 
 	# Dismantle the threading
 
-	$self->{threads}	= \(my $ta);
-	$self->{next_job_id}	= \(my $tb = 1);
-	$self->{job_to_thread}	= \(my $tc);
-	$self->{post_commands}	= \(my $td);
-	$self->{finished}	= \(my $te);
-
+	${$self->{threads}}		= undef;
+	${$self->{next_job_id}}		= undef;
+	${$self->{job_to_thread}}	= undef;
+	${$self->{post_commands}}	= undef;
+	${$self->{final_commands}}	= undef;
+	${$self->{finished}}		= undef;
+	
 	return @r;
 }
 
@@ -540,7 +566,8 @@ sub thread_then {
 	my $self = shift;
 	my $cmd  = shift;
 	my $post = shift;
-	
+	my $final = shift;
+
 	warn "E2::Interface::thread_then\n"	if $DEBUG > 1;
 	
 #	warn 'Dump of $cmd:' . Dumper( $cmd )	if $DEBUG > 2;
@@ -558,7 +585,9 @@ sub thread_then {
 	}
 	
 	if( !$response[0] || $response[0] ne "-1" ) {
-		return &$post( @response );
+		my @r = &$post( @response );
+		&$final if $final;
+		return ( @r>1 ? @r : $r[0] );
 	}
 
 	# If we're here, we called a threaded routine. Add the post
@@ -567,7 +596,8 @@ sub thread_then {
 	warn "Job deferred and assigned id $response[1]"	if $DEBUG > 2;
 
 	push @{${$self->{post_commands}}->{$response[1]}}, $post;
-	
+	push @{${$self->{final_commands}}->{$response[1]}}, $final if $final;
+
 	return @response;
 }
 
@@ -580,7 +610,10 @@ sub finish {
 	warn "E2::Interface::finish\n"		if $DEBUG > 1;
 	warn "Job id = $job"			if $DEBUG > 2;
 
-	# If $job is undefined, find the first job to return and return it
+    # What we're going to do here is get a $job (if we haven't been passed
+    # one), and get a $response hash for that job. Otherwise, return.
+
+	# If $job is undefined, find the first finished job and return it
 
 	if( ! defined $job ) {
 
@@ -589,44 +622,51 @@ sub finish {
 		(my $k) = keys %{${$self->{finished}}};
 		if( $k ) {
 			warn "Job previously finished, returning" if $DEBUG > 2;
+			$job = $k;
 			$response = delete ${$self->{finished}}->{$k};
 
 		# Otherwise, check all the queues for finished jobs
 
 		} else {
-			my $pending = 0;
+			my $pending = 0; # Count pending jobs, so we know
+			                 # whether there are any left or not
 			
 			for( my $i = 0; $i < @{${$self->{threads}}}; $i++ ) {
-				my $q = ${$self->{threads}}->[$i]->{from_q};
-				my $pending += $q->pending;	
-				my $id = $q->dequeue_nb;
+				my $t = ${$self->{threads}}->[$i];
+				my $pending += $t->{to_q}->pending;	
+				my $id = $t->{from_q}->dequeue_nb;
 
 				if( $id ) { # Got one
-					$response = $q->dequeue;
+					$response = $t->{from_q}->dequeue;
+					$job = $id;
 					last;
 				}
 			}
 
 			if( ! $response ) {
-				if( ! $pending ) { # No jobs pending
+
+				# If there are no pending jobs, return a
+				# false value. otherwise, return a
+				# non-specific deferred value
+
+				if( ! $pending ) {
 					return ();
 				}
-
-				# Return non-specific deferred
 
 				return (-1, -1);
 			}
 		}
 		
-	# Otherwise, check to see if we've already pulled this job off the
-	# queue.
+	# Otherwise ($job _is_ defined), so first check to see if
+	# we've already pulled this job off the queue.
 
 	} elsif( ${$self->{finished}}->{$job} ) {
 		warn "Job previously finished, returning"	if $DEBUG > 2;
 		$response = ${$self->{finished}}->{$job};
 		delete ${$self->{finished}}->{$job};
 
-	# Otherwise, get it off the queue (if we can)
+	# Otherwise, try to get it off the queue; return a deferred value
+	# if we can't.
 
 	} else {
 		my $thr = ${$self->{job_to_thread}}->{$job};
@@ -662,11 +702,23 @@ sub finish {
 		}
 	}
 
+    # At this point, we have a valid $job and $response. Do
+    # post-processing, exception-handling, etc., and return.
+
 	# If we've received an exception, now is the time to
 	# throw it.
 
 	if( $response->{exception} ) {
-		croak $response->{exception};
+		
+		# Execute any final commands and clear all commands
+		
+		foreach( @{${$self->{final_commands}}->{$job}} ) { &$_ }
+		delete ${$self->{post_commands}}->{$job};
+		delete ${$self->{final_commands}}->{$job};
+		
+		# throw
+
+		die $response->{exception};
 	}
 
 	# Now, finish the command and return
@@ -686,12 +738,23 @@ sub finish {
 	warn "Executing " . scalar @{${$self->{post_commands}}->{$job}} .
 		"post-commands"		if $DEBUG > 2;
 
-	while( my $c = shift @{${$self->{post_commands}}->{$job}} ) {
-		@ret = &$c( @param );
-		@param = @ret;
-	}
+	eval {
+		while( my $c = shift @{${$self->{post_commands}}->{$job}} ) {
+			@ret = &$c( @param );
+			@param = @ret;
+		}
+	};
+	my $exc = $@;
 	
+	# Execute any 'final' commands. These have no return values.
+
+	foreach( @{${$self->{final_commands}}->{$job}} ) { &$_ }
 	delete ${$self->{post_commands}}->{$job};
+	delete ${$self->{final_commands}}->{$job};
+
+	# If post-processing threw any exceptions, re-throw them
+
+	die $exc if $exc;
 	
 	return ( $job, @ret );
 }
@@ -740,8 +803,10 @@ sub start_job {
 # Extracts a cookie from an LWP::UserAgent object.
 
 sub extract_cookie {
+	require HTTP::Cookies;
+
 	my $response = shift;
-	my $c = new HTTP::Cookies;
+	my $c = HTTP::Cookies->new;
 
 	warn "E2::Interface::extract_cookie\n"		if $DEBUG > 1;
 	
@@ -763,6 +828,8 @@ sub extract_cookie {
 sub post_process {
 	my $resp = shift	or croak "Usage: post_process RESPONSE";
 
+	require HTTP::Request;
+
 	warn "E2::Interface::post_process\n"	if $DEBUG > 1;
 	
 	my $s = $resp->as_string;
@@ -771,43 +838,149 @@ sub post_process {
 
 	$s =~ s/.*?\n\n//s;
 
-	# Fix encoding
+	##### These are workarounds for some of the broken XML that
+	##### displaytype=xmltrue outputs due to unescaped text.
 
-	# These were stolen from a (public domain) script called
+	# Escape the various entities that have not been escaped
+
+	my %valid = ( amp => 1, lt => 1, gt => 1 );
+	$s =~ s/\&(\w+?);/$valid{lc($1)} ? "\&$1;" : "\&amp;$1;"/sge;
+
+	# For &, <, and > which haven't been escaped, escape them (if we
+	# can be sure they're not valid xml.
+
+	$s =~ s/\&(?!\w+;)/&amp;/sg;
+	#$s =~ s/<(?![\w\/?][^<]*>)/&lt;/sg;
+	#$s =~ s/>/($` =~ m-<[\w\/?][^>]*$-s) ? '>' : '&gt;'/sge;
+
+	# Demoronize and return
+
+	return &demoronise($s);
+}
+
+sub demoronise {
+	local $_ = shift;
+
+	# This has been adapted from a public domain script called
+	# demoroniser.pl by John Walker (can be found at
+	# http://www.fourmilab.ch/webtools/demoroniser/ ). That script
+	# replaced MS "smart quotes" and other nonstandard characters
+	# with their plaintext equivalents.
+	#
+	# I've modified them to convert, instead, to their HTML entity
+	# equivalents.
+	
+	#   Map strategically incompatible non-ISO characters in the
+	#   range 0x82 -- 0x9F into plausible substitutes where
+	#   possible.
+
+	if( 0 ) { # Convert to html entities
+	
+		s/\x82/&amp;sbquo;/sg;
+		s/\x83/&amp;fnof;/sg;
+		s/\x84/&amp;bdquo;/sg;
+		s/\x85/&amp;hellip;/sg;
+		s/\x86/&amp;dagger;/sg;
+		s/\x87/&amp;Dagger;/sg;
+		s/\x88/&amp;circ;/sg;
+		s/\x89/&amp;permil;/sg;
+		s/\x8A/&amp;Scaron;/sg;
+		s/\x8B/&amp;lsaquo;/sg;
+		s/\x8C/&amp;OElig;/sg;
+
+		s/\x91/&amp;lsquo;/sg;
+		s/\x92/&amp;rsquo;/sg;
+		s/\x93/&amp;ldquo;/sg;
+		s/\x94/&amp;rdquo;/sg;
+		s/\x95/&amp;bull;/sg;
+		s/\x96/&amp;ndash;/sg;
+		s/\x97/&amp;mdash;/sg;
+		s/\x98/&amp;tilde;/sg;
+		s/\x99/&amp;trade;/sg;
+		s/\x9A/&amp;scaron;/sg;
+		s/\x9B/&amp;rsaquo;/sg;
+		s/\x9C/&amp;oelig;/sg;
+
+	} else {	# This is not executed; if it were, it would convert
+			# broken MS encoding to plaintext equiv (this is how
+			# demoronise.pl handled it).
+	
+		s/\x82/,/g;
+		s-\x83-<em>f</em>-g;
+		s/\x84/,,/g;
+		s/\x85/.../g;
+
+		s/\x88/^/g;
+		s-\x89- �/같-g;
+
+		s/\x8B/</g;
+		s/\x8C/Oe/g;
+
+		s/\x91/`/g;
+		s/\x92/'/g;
+		s/\x93/"/g;
+		s/\x94/"/g;
+		s/\x95/*/g;
+		s/\x96/-/g;
+		s/\x97/--/g;
+		s-\x98-<sup>~</sup>-g;
+		s-\x99-<sup>TM</sup>-g;
+
+		s/\x9B/>/g;
+		s/\x9C/oe/g;
+	}
+
+	#   Supply missing semicolon at end of numeric entity if
+	#   Billy's bozos left it out.
+
+	s/(&#[0-2]\d\d)\s/$1; /g;
+
+	#   Fix dimbulb obscure numeric rendering of &lt; &gt; &amp;
+
+	s/&#038;/&amp;/g;
+	s/&#060;/&lt;/g;
+	s/&#062;/&gt;/g;
+
+	return $_;
+}
+
+sub old_demoronise {
+	my $s = shift;
+	
+	# This has been adapted from a public domain script called
 	# demoronizer.pl by John Walker (can be found at
-	# http://www.fourmilab.ch/webtools/demoroniser/ ).
-	# They replace MS "smart quotes" et al with stuff that won't make
-	# XML parsers bitch/die/etc.
+	# http://www.fourmilab.ch/webtools/demoroniser/ ). That script
+	# replaced MS "smart quotes" and other nonstandard characters
+	# with their plaintext equivalents.
+	#
+	# I've modified them to convert, instead, to their UTF-8
+	# equivalents.
 
-	$s =~ s/\x82/,/sg;
-	$s =~ s-\x83-<em>f</em>-sg;
-	$s =~ s/\x84/,,/sg;
-	$s =~ s/\x85/.../sg;
+	# (Christ this is some line noise...)
 
-	$s =~ s/\x88/^/sg;
-	$s =~ s-\x89- 째/째째-sg;
-
-	$s =~ s/\x8B/</sg;
-	$s =~ s/\x8C/Oe/sg;
-
-	$s =~ s/\x91/`/sg;
-	$s =~ s/\x92/'/sg;
-	$s =~ s/\x93/"/sg;
-	$s =~ s/\x94/"/sg;
-	$s =~ s/\x95/*/sg;
-	$s =~ s/\x96/-/sg;
-	$s =~ s/\x97/--/sg;
-	$s =~ s-\x98-<sup>~</sup>-sg;
-	$s =~ s-\x99-<sup>TM</sup>-sg;
-
-	$s =~ s/\x9B/>/sg;
-	$s =~ s/\x9C/oe/sg;
-
-	# Do some conversions to fix E2's odd character encoding  --s_alanet
-	# (This is a workaround so that the parser doesn't choke.)
-
-	my $f = Unicode::String::latin1( $s );
-	$s = $f->utf8;	
+	$s =~ s/\xC2\x82/\xE2\x80\x98/sg;	# &sbquo;
+	$s =~ s/\xC2\x83/\xC6\x92/sg;		# &fnof;
+	$s =~ s/\xC2\x84/\xE2\x80\x9E/sg;	# &bdquo;
+	$s =~ s/\xC2\x85/\xE2\x80\xA6/sg;	# &hellip;
+	$s =~ s/\xC2\x86/\xE2\x80\xA0/sg;	# &dagger;
+	$s =~ s/\xC2\x87/\xE2\x80\xA1/sg;	# &Dagger;
+	$s =~ s/\xC2\x88/\xCB\x86/sg;		# &circ;
+	$s =~ s/\xC2\x89/\xE2\x80\xB0/sg;	# &permil;
+	$s =~ s/\xC2\x8A/\xC5\xA0/sg;		# &Scaron;
+	$s =~ s/\xC2\x8B/\xE2\x80\xB9/sg;	# &lsaquo;
+	$s =~ s/\xC2\x8C/\xC5\x92/sg;		# &OElig;
+	$s =~ s/\xC2\x91/\xE2\x80\x98/sg;	# &lsquo;
+	$s =~ s/\xC2\x92/\xE2\x80\x99/sg;	# &rsquo;
+	$s =~ s/\xC2\x93/\xE2\x80\x9C/sg;	# &ldquo;
+	$s =~ s/\xC2\x94/\xE2\x80\x9D/sg;	# &rdquo;
+	$s =~ s/\xC2\x95/\xE2\x80\xA2/sg;	# &bull;
+	$s =~ s/\xC2\x96/\xE2\x80\x93/sg;	# &ndash;
+	$s =~ s/\xC2\x97/\xE2\x80\x94/sg;	# &mdash;
+	$s =~ s/\xC2\x98/\xDC\xB2/sg;		# &tilde;
+	$s =~ s/\xC2\x99/\xE2\x84\xA2/sg;	# &trade;
+	$s =~ s/\xC2\x9A/\xC5\xA1/sg;		# &scaron;
+	$s =~ s/\xC2\x9B/\xE2\x80\xBA/sg;	# &rsaquo;
+	$s =~ s/\xC2\x9C/\xC5\x93/sg;		# &oelig;
 	
 	return $s;
 }
@@ -827,6 +1000,11 @@ sub process_request_raw {
 		      "METHOD, URL, COOKIE, AGENTSTR [, ATTR_PAIRS ]";
 	}
 	
+	require LWP::UserAgent;
+	require HTTP::Request::Common;
+	import  HTTP::Request::Common 'POST';
+	require HTTP::Cookies;
+
 	my $req		= shift;
 	my $url		= shift;
 	my $cookie	= shift;
@@ -834,7 +1012,10 @@ sub process_request_raw {
 	my %pairs = @_;
 
 	warn "E2::Interface::process_request_raw\n"	if $DEBUG > 1;
-	
+
+	# Put together an agentstring and cookie, and create an
+	# LWP::UserAgent object to hold them
+
 	my $str = client_name . '/' . version . " ($OS_STRING)";
 	$str = "$agentstr $str" if $agentstr;
 	
@@ -863,11 +1044,14 @@ sub process_request_raw {
 		);
 	}
 
+
+	# Execute the request
+
 	my $request;
 
 	if( $req eq "POST" ) {
 
-		$request = POST $url, [ %pairs ];
+		$request = POST( $url => [ %pairs ] );
 
 	} else {
 	
@@ -1107,7 +1291,9 @@ Exceptions: 'Unable to process request', 'Invalid document'
 
 =item $e2-E<gt>verify_login
 
-This method can be called after setting C<cookie>; it (1) verifies that the everything2 server accepted the cookie as valid, and (2) determines the user_id of the logged-in user, which would otherwise be unavailable.
+This method can be called after setting C<cookie> to verify the login.
+
+It (1) verifies that the everything2 server accepted the cookie as valid, and (2) determines the user_id of the logged-in user, which would otherwise be unavailable.
 
 =item $e2-E<gt>logout
 
@@ -1117,9 +1303,11 @@ Returns true on success and C<undef> on failure.
 
 =item $e2-E<gt>process_request HASH
 
-C<process_request> assembles a URL based upon the key/value pairs in HASH (example: C<process_request( node_id =E<gt> 124 )> would translate to "http://everything2.com/?node_id=124" (well, technically, a POST is used rather than a GET, but you get the idea)).
+C<process_request> requests the specified page via HTTP and returns its text.
 
-It requests that page via HTTP and returns the text of the response (stripped of HTTP headers and with smart quotes and other MS weirdness replaced by the plaintext equivalents). It returns C<undef> on failure.
+It assembles a URL based upon the key/value pairs in HASH (example: C<process_request( node_id =E<gt> 124 )> would translate to "http://everything2.com/?node_id=124" (well, technically, a POST is used rather than a GET, but you get the idea)).
+
+The returned text is stripped of HTTP headers and smart quotes and other MS weirdness prior te the return.
 
 For those pages that may be retrieved with or without link parsing (conversion of "[link]" to a markup tag), this method uses this object's C<parse_links> setting.
 
@@ -1129,7 +1317,9 @@ Exceptions: 'Unable to process request'
 
 =item $e2-E<gt>clone OBJECT
 
-C<clone> copies various members from the C<E2::Interface>-derived object OBJECT to this object so that both objects will use the same agent to process requests to Everything2.com. This is useful if, for example, one wants to use both an L<E2::Node|E2::Node> and an L<E2::Message|E2::Message> object to communicate with Everything2.com as the same user. This would work as follows:
+C<clone> copies various members from the C<E2::Interface>-derived object OBJECT to this object so that both objects will use the same agent to process requests to Everything2.com.
+
+This is useful if, for example, one wants to use both an L<E2::Node|E2::Node> and an L<E2::Message|E2::Message> object to communicate with Everything2.com as the same user. This would work as follows:
 
 	$msg = new E2::Message;
 	$msg->login( $username, $password );
@@ -1143,7 +1333,9 @@ C<clone> returns C<$self> if successful, otherwise returns C<undef>.
 
 =item E2::Interface::debug [ LEVEL ]
 
-C<debug> sets the debug level of E2::Interface. This defaults to zero. This value is shared by all instances of e2interface classes.
+C<debug> sets the debug level of e2interface.
+
+The default debug level is zero. This value is shared by all instances of e2interface classes.
 
 Debug levels (each displays all messages from levels lower than it):
 
@@ -1171,17 +1363,23 @@ C<this_username> returns the username currently being used by this agent.
 
 =item $e2-E<gt>this_user_id
 
-C<this_user_id> returns the user_id of the current user. This is only available after C<login> or C<verify_login> has been called (in this instance or another C<clone>d instance).
+C<this_user_id> returns the user_id of the current user.
+
+This is only available after C<login> or C<verify_login> has been called (in this instance or another C<clone>d instance).
 
 =item $e2-E<gt>domain [ DOMAIN ]
 
-This method returns, and (if DOMAIN is specified) sets the domain used to fetch pages from e2. By default, this is "everything2.com".
+This method returns, and (if DOMAIN is specified) sets the domain used to fetch pages from e2.
+
+By default, this is "everything2.com".
 
 DOMAIN should contain neither an "http://" or a trailing "/".
 
 =item $e2-E<gt>cookie [ COOKIE ]
 
-C<cookie> returns the current everything2.com cookie (used to maintain login). If COOKIE is specified, C<cookie> sets everything2.com's cookie to "COOKIE" and returns that value.
+C<cookie> returns the current everything2.com cookie (used to maintain login).
+
+If COOKIE is specified, C<cookie> sets everything2.com's cookie to "COOKIE" and returns that value.
 
 "COOKIE" is a string value of the "userpass" cookie at everything2.com. Example: an account with the username "willie" and password "S3KRet" would have a cookie of "willie%257CwirQfxAfmq8I6". This is generated by the everything2 servers.
 
@@ -1242,7 +1440,9 @@ C<use_threads> returns true on success and C<undef> on failure.
 
 =item $e2-E<gt>detach_threads
 
-These methods disable e2interface's threading for an instance or a set of C<clone>d instances. C<join_threads> waits for the background threads to run through the remainder of their queues before destroying them. C<detach_threads> detaches the threads immediately, discarding any incomplete jobs on the queue.
+These methods disable e2interface's threading for an instance or a set of C<clone>d instances.
+
+C<join_threads> waits for the background threads to run through the remainder of their queues before destroying them. C<detach_threads> detaches the threads immediately, discarding any incomplete jobs on the queue.
 
 Both methods process any finished jobs that have not yet been C<finish>ed and return a list of these jobs. i.e.:
 
@@ -1252,17 +1452,25 @@ Both methods process any finished jobs that have not yet been C<finish>ed and re
 
 =item $e2-E<gt>finish [ JOB_ID ]
 
-C<finish> handles all post-processing of deferred methods (see C<thread_then> for information on adding post-processing to a method), and attempts to return the return value of a deferred method. If JOB_ID is specified, it attempts to return the return value of that job, otherwise it attempts to return the return value of the first completed job on its queue.
+C<finish> handles all post-processing of deferred methods, and returns the final return value of the deferred method.
+
+(See C<thread_then> for information on adding post-processing to a method.)
+
+If JOB_ID is specified, it attempts to return the return value of that job, otherwise it attempts to return the return value of the first completed job on its queue.
 
 It returns a list consisting of the job_id of the deferred method followed by the return value of the method in list context. If JOB_ID is specified and the corresponding method is not yet completed, this method returns -1. If JOB_ID is not specified, and there are methods left on the deferred queue but none of them are completed, it returns (-1, -1). If the deferred queue is empty, it returns an empty list.
 
-=item $e2-E<gt>thread_then METHOD, CODE
+If exceptions have been raised by a deferred method, or by post-processing code, they will be raised in the call to C<finish>.
+
+=item $e2-E<gt>thread_then METHOD, CODE [, FINAL ]
 
 C<thread_then> executes METHOD (which is a reference to an array that consists of a method and its parameters, e.g.: [ \&E2::Node::load, $e2, $title, $type ]), and sets up CODE (a code reference) to be passed the return value of METHOD when METHOD completes.
 
 C<thread_then> is named as a sort of mnemonic device: "thread this method, then do this..."
 
 C<thread_then> returns (-1, job_id) if METHOD is deferred; if METHOD is not deferred, thread_then immediately passes its return value to CODE and then returns the return value of CODE. This allows code to be written that can be run as either threaded or unthreaded; indeed this is how e2interface is implemented internally.
+
+If METHOD throws an exception (threaded exceptions are thrown during the call to C<finish>), CODE will not be executed. If CODE throws an exception, any post-processing chained after CODE will not be executed. For this reason, a third code reference, FINAL, can be specified. This code will be passed no parameters, and its return value will be discarded, but it is guaranteed to be executed after ll post-processing is complete, or, in the case of an exception thrown by METHOD or CODE, to be executed before C<finish> throws that exception.
 
 =back
 

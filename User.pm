@@ -10,7 +10,6 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use HTML::Entities;
 
 use E2::Node;
 
@@ -96,7 +95,7 @@ sub twig_handlers {
 		},
 		'node/doctext' => sub {
 			(my $a, my $b) = @_;
-			$self->{text} = decode_entities( $b->text );
+			$self->{text} = $b->text;
 		},
 		'experience' => sub {
 			(my $a, my $b) = @_;
