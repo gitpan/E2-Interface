@@ -1,5 +1,18 @@
 Revision history for Perl extension e2interface.
 
+0.34 Thu Aug 07 2003
+			- Fixed a bug in E2::Interface::extract_cookies:
+			  either HTTP::Cookies or e2's server is unreliable
+			  as to whether is structures the cookie as
+			  'userpass="...";' or 'userpass=...;'. I believe
+			  this hit me before, so I switched from one to
+			  the other--now I realize it needs to cover both.
+
+			- I think I finally found a usable workaround for
+			  the issue of E2 not escaping titles. E2::Interface::
+			  post_process now escapes all '<', '>', and '&'
+			  between "<e2link .*?>" and "</e2link>".
+
 0.33 Sun Jul 20 2003
 			- Resolved a problem with E2::Interface::parse_twig
 			  and unicode, so we no longer have to strip unicode

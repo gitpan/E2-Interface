@@ -85,9 +85,11 @@ sub load {
 	warn "E2::Node::load\n"		if $DEBUG > 1;
 
 	warn "Loading node $title"	if $DEBUG > 2;
-
+	
 	$softlink = $self->node_id	if $softlink == -1;
 
+	warn "[softlinking $softlink]"	if $DEBUG > 2 && $softlink;
+	
 	my %opt;
 
 	$opt{node}	  = $title;

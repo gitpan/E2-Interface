@@ -1,6 +1,6 @@
 # E2::Interface
 # Jose M. Weeks <jose@joseweeks.com>
-# 20 July 2003
+# 07 August 2003
 #
 # See bottom for pod documentation.
 
@@ -11,7 +11,7 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = "0.33";
+our $VERSION = "0.34";
 
 # This module also require()s the following modules in the body of
 # certain methods (threading loads faster this way than with use.
@@ -683,6 +683,8 @@ sub finish {
 		
 			warn "Retrieved job $id"	if $DEBUG > 2;
 
+			delete ${$self->{job_to_thread}}->{$id};
+
 			if( $id == $job ) {	# The right job?
 				$response = $r;
 				last;
@@ -811,13 +813,17 @@ sub extract_cookie {
 	warn "E2::Interface::extract_cookie\n"		if $DEBUG > 1;
 	
 	$c->extract_cookies( $response );
-	$c->as_string =~ /userpass=(.*?);/;
-	if( $1 && $1 eq '""' ) { return undef; } # Sometimes the server returns
-						 # userpass=""; if so, discard
 
-	warn "Cookie found: $1"				if $1 && $DEBUG > 2;
+	# It seems that the cookie value may or may not be surrounded by
+	# quotation marks, so deal with either eventuality.
+
+	$c->as_string =~ /userpass=(.*?);/;
+	my $s = $1;
+	$s =~ s/^"(.*)"$/$1/ if $s;
+
+	warn "Cookie found: $s"				if $1 && $DEBUG > 2;
 	
-	return $1;
+	return $s;
 }
 
 # Usage: $string = post_process STRING
@@ -841,15 +847,28 @@ sub post_process {
 	##### These are workarounds for some of the broken XML that
 	##### displaytype=xmltrue outputs due to unescaped text.
 
+	# E2 doesn't properly escape a number of titles in e2links, so
+	# do it here....
+
+	my $encode = sub {
+		local $_ = shift;
+		s/</&lt;/sg;
+		s/>/&gt;/sg;
+		s/&/amp;/sg;
+		return $_;
+	};
+	
+	$s =~ s/(<e2link .*?>)(.*?)(<\/e2link>)/$1 . &$encode($2) . $3/esg;
+
 	# Escape the various entities that have not been escaped
 
-	my %valid = ( amp => 1, lt => 1, gt => 1 );
-	$s =~ s/\&(\w+?);/$valid{lc($1)} ? "\&$1;" : "\&amp;$1;"/sge;
+	#my %valid = ( amp => 1, lt => 1, gt => 1 );
+	#$s =~ s/\&(\w+?);/$valid{lc($1)} ? "\&$1;" : "\&amp;$1;"/sge;
 
 	# For &, <, and > which haven't been escaped, escape them (if we
 	# can be sure they're not valid xml.
 
-	$s =~ s/\&(?!\w+;)/&amp;/sg;
+#	$s =~ s/\&(?!\w+;)/&amp;/sg;
 	#$s =~ s/<(?![\w\/?][^<]*>)/&lt;/sg;
 	#$s =~ s/>/($` =~ m-<[\w\/?][^>]*$-s) ? '>' : '&gt;'/sge;
 
@@ -1019,9 +1038,9 @@ sub process_request_raw {
 	my $str = client_name . '/' . version . " ($OS_STRING)";
 	$str = "$agentstr $str" if $agentstr;
 	
-	warn "\$req = $req\n\$url = $url\n\$cookie = $cookie\n" .
-		"\$agentstr = $agentstr\nAttribute pairs:" . Dumper( \%pairs )
-			if $DEBUG > 2;
+#	warn "\$req = $req\n\$url = $url\n\$cookie = $cookie\n" .
+#		"\$agentstr = $agentstr\nAttribute pairs:" . Dumper( \%pairs )
+#			if $DEBUG > 2;
 
 	my $agent = LWP::UserAgent->new(
 		agent		=> $str,
@@ -1470,7 +1489,7 @@ C<thread_then> is named as a sort of mnemonic device: "thread this method, then 
 
 C<thread_then> returns (-1, job_id) if METHOD is deferred; if METHOD is not deferred, thread_then immediately passes its return value to CODE and then returns the return value of CODE. This allows code to be written that can be run as either threaded or unthreaded; indeed this is how e2interface is implemented internally.
 
-If METHOD throws an exception (threaded exceptions are thrown during the call to C<finish>), CODE will not be executed. If CODE throws an exception, any post-processing chained after CODE will not be executed. For this reason, a third code reference, FINAL, can be specified. This code will be passed no parameters, and its return value will be discarded, but it is guaranteed to be executed after ll post-processing is complete, or, in the case of an exception thrown by METHOD or CODE, to be executed before C<finish> throws that exception.
+If METHOD throws an exception (threaded exceptions are thrown during the call to C<finish>), CODE will not be executed. If CODE throws an exception, any post-processing chained after CODE will not be executed. For this reason, a third code reference, FINAL, can be specified. This code will be passed no parameters, and its return value will be discarded, but it is guaranteed to be executed after all post-processing is complete, or, in the case of an exception thrown by METHOD or CODE, to be executed before C<finish> throws that exception.
 
 =back
 

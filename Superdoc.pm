@@ -1,6 +1,6 @@
 # E2::Superdoc
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 07 August 2003
 #
 # See bottom for pod documentation.
 
@@ -10,12 +10,11 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use HTML::Entities;
 
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.32";
+our $VERSION = "0.34";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -68,7 +67,7 @@ sub twig_handlers {
 
 		'node/superdoctext' => sub {
 			(my $a, my $b) = @_;
-			$self->{text} = decode_entities($b->text);
+			$self->{text} = $b->text;
 		}
 	);
 }

@@ -117,30 +117,13 @@ sub parse {
 		croak "Invalid ticker type: $type";
 	}
 
-	# Usage: workarounds TYPE, XML_STRING
-
-	sub workarounds {
-		my $t = shift;
-		my $r = shift;
-		
-		# WORKAROUNDS for bugs in the e2 ticker output.
-		# (these should be removed as things are patched
-		# up serverside.)
-
-		if( $t eq 'coolnodes' ) {
-			$r =~ s/&/&amp;/sg;
-		}
-		
-		return $r;
-	}
-
 	# This is here in case (for some oddball reason) someone wants
 	# to load a ticker from a text string. This is used for the test
 	# cases, and probably for cacheing and so on...
 
 	if( my $s = $self->{ticker_string} ) {
 		$self->{ticker_string} = undef;
-		$self->parse_twig( workarounds( $type, $s ), $handlers );
+		$self->parse_twig( $s, $handlers );
 		return @$listref;
 	}
 	
@@ -155,7 +138,7 @@ sub parse {
 			@_
 		],
 		sub {
-			$self->parse_twig(workarounds($type,shift), $handlers);
+			$self->parse_twig(shift, $handlers);
 			return @$listref;
 		}
 	);

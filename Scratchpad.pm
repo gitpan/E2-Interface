@@ -57,7 +57,7 @@ sub load {
 
 	return $self->thread_then( 
 		[
-			\&parse,
+			\&E2::Ticker::parse,
 			$self,
 			'scratch',
 			$handlers,
