@@ -1,0 +1,60 @@
+Revision history for Perl extension e2interface.
+
+0.21  Sun Mar 16 2003
+			- Added E2::Room, E2::Session, and
+			  E2::ClientVersion.
+
+			- Added additional tickers to E2::Ticker.
+
+			- Various bugfixes and new test cases.
+
+			- Initial CPAN release.
+
+0.20  Sun Mar 02 2003
+			- Split most of the modules into either subclasses
+			  of E2::Node or E2::Ticker and consolidated a lot
+			  of the process_request and XML::Twig::parse
+			  calls.
+
+			- Standardized the exception handling and documented
+			  possible exceptions for each method.
+
+			- Split E2::User into E2::User ande E2::UserSearch.
+
+			- Added E2::Usergroup and E2::Superdoc.
+
+			- Removed E2::Code and E2::Nodetrack for the time
+			  being.
+
+			- Updated all the documentation and added a couple
+			  test cases, in order to be ready for the initial
+			  public (e2-wide) release.
+
+0.13  Sun Feb 23 2003
+			- Migrated E2::User return values to hashrefs.
+
+			- Added E2::Xmltrue and edited E2::Node ande E2::User
+			  to inherit it (so they now provide a consistent
+			  interface).
+
+			- Added E2::Ticker
+
+0.12  Fri Feb 21 2003
+			- Migrated some list return values to hashrefs.
+			
+			- Fixed (workaround) the character encoding bug
+			  that caused expat to die on certain nodes.
+
+			- Added an (optional) dot directory to the user's
+			  home, allowing cookies and other data to persist.
+
+			- Added E2::Code, E2::Nodetrack
+
+0.11  Thu Nov 21 2002
+			- Replaced parser XML::Simple with XML::Twig for
+			  thread safety.
+
+			- Added E2::User, E2::Search
+
+0.10  Fri Nov 15 2002
+			- Initial release to clientdev usergroup on E2

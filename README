@@ -1,0 +1,29 @@
+e2interface/0.21
+================
+
+This is the initial CPAN release of e2interface,
+a perl-based client interface to the everything2.com
+collaborative database.
+
+See the manpages for E2::Interface and its descendants
+and http://everything2.com/?node=e2interface for more
+detailed information.
+
+INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+DEPENDENCIES
+
+This module requires these other modules and libraries:
+
+  XML::Twig, expat, LWP
+
+COPYRIGHT AND LICENCE
+
+  This software is public domain.
