@@ -1,6 +1,6 @@
 # E2::Node
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 18 June 2003
 #
 # See bottom for pod documentation.
 
@@ -14,7 +14,7 @@ use Carp;
 use E2::Interface;
 
 our @ISA = "E2::Interface";
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -330,15 +330,15 @@ E2::Node - A module for loading nodes from everything2.com based on title or nod
 	# List softlinks
 	
 	print "\nSoftlinks:\n";
-	foreach my $s ($node->list_softlinks) {
-		print $s->{title} . "\n";
+	foreach( $node->list_softlinks ) {
+		print $_->{title} . "\n";
 	}
 
 =head1 DESCRIPTION
 
 This module is the base class for all e2interface modules that load data from everything2.com based on title or node_id. It allows access to the data in those nodes, and its subclasses provide data exclusive to their particular node types.
 
-This module provides generic methods to load and parse nodes, and is also capable of detecting the type of node passed to it and re-C<bless>ing itself into the proper subclass.
+This module provides generic methods to load and parse nodes, and is also capable of detecting the type of node passed to it and re-C<bless>ing itself into the proper subclass (see the documentation for C<load> and C<autodetect> for more information on this).
 
 This module inherits L<E2::Interface|E2::Interface>.
 
@@ -411,9 +411,61 @@ Note: once an object has been re-C<bless>ed, it is a member of the new class, an
 
 	$node->load( "nate", "user" ); # throws 'Wrong node type:' exception.
 
-Once the object has been re-C<bless>ed, if we wish to autodetect node type again, we must call E2::Node->new on the object.
+Once the object has been re-C<bless>ed, if we wish to autodetect node type again, we must call C<$node-E<gt>autodetect>.
 
 Exceptions: 'Unable to process request', 'Wrong node type:', 'Parse error:', 'Invalid node type:'
+
+=item $node-E<gt>autodetect
+
+This method is used enable nodetype autodetection on an object that would normally not allow it.
+
+Objects of class E2::Node autodetect automatically. Derived objects, however, throw an exception whenever they load a node of an incompatible type. In most cases, we don't want, say, an E2::User to just become an E2::Superdoc. C<autodetect> is for times that we do.
+
+When would this be useful? Well, mostly, this is important if we want to use an object for autodetection more than once. Once an E2::Node has autodetected, it I<becomes> the detected nodetype (it is re-C<bless>ed) and therefore loses the ability to autodetect.
+
+And that's where C<autodetect> comes in. It C<bless>es the object back into the E2::Node class. As a side-effect, most of its methods become unavailable.
+
+Example use:
+
+	my $node = new E2::Node;
+
+	for(;;) {
+		print "Input node title (or RETURN to end):";
+		my $title = <STDIN>;
+		chomp $title;
+
+		if( ! $title ) { last }
+
+		print "Input node type (or RETURN for none):";
+		my $type = <STDIN>;
+		chomp $type;
+
+		$node->autodetect;
+		$node->load( $title, $type ) or die "Unable to load node";
+
+		&display_node( $node );
+	}
+
+	sub display_node {
+		my $node = shift;
+
+		# Print node info shared by all types of nodes
+
+		print   "Node title: " . $node->title;
+		print "\nNode type:  " . $node->type . "\n\n";
+
+		# Print node info specific to each type
+
+		if( $node->type eq 'e2node' ) {
+			# ...
+		} elsif( $node->type eq 'user' ) {
+			# ...
+		} 
+
+		# There should be a bunch of elsif ... statements here,
+		# each displaying a specific type of node
+		# ...
+	}
 
 =back
 
@@ -424,6 +476,8 @@ L<E2::Node>,
 L<E2::E2Node>,
 L<E2::Writeup>,
 L<E2::Superdoc>,
+L<E2::Room>,
+L<E2::Usergroup>,
 L<http://everything2.com>,
 L<http://everything2.com/?node=clientdev>
 

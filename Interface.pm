@@ -1,6 +1,6 @@
 # E2::Interface
 # Jose M. Weeks <jose@joseweeks.com>
-# 10 June 2003
+# 18 June 2003
 #
 # See bottom for pod documentation.
 
@@ -17,7 +17,6 @@ use HTTP::Cookies;
 use URI::Escape;
 use Unicode::String;
 use XML::Twig;
-use Data::Dumper;
 
 use E2::Ticker;
 
@@ -32,7 +31,7 @@ our $THREADED = !$@;
 our $DEBUG	= 0;	# Debug info: set to 1 for basic debug info,
 			#             2 to add a message for each sub,
 			#             3 to add data dumping
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our @ISA = ("Exporter");
 our @EXPORT = qw($DEBUG);
 
@@ -69,10 +68,13 @@ sub process_request;
 sub domain;
 sub cookie;
 sub parse_links;
+sub document;
 sub logged_in;
+sub agentstring;
 
 sub version;
 sub client_name;
+sub debug;
 
 sub this_username;
 sub this_user_id;
@@ -80,14 +82,18 @@ sub this_user_id;
 sub use_threads;
 sub job_id;
 sub thread_then;
+sub finish;
 
 # Private
 
+sub start_job;
+sub extract_cookie;
 sub post_process;
 sub process_request_raw;
 
-
+################################################################################
 # Class methods
+################################################################################
 
 sub version {
 	return $VERSION;
@@ -98,9 +104,12 @@ sub client_name {
 }
 
 sub debug {
-	my $d = shift;
-
+	my $d = shift;         # E2::Interface::debug(1) or $e2->debug(1) ?
+	$d = shift if ref($d);
+	
 	if( $d && !$DEBUG ) {
+
+		# Print e2interface info
 
 		print '-' x 80 . "\n";
 		print &client_name . '/' . &version . 
@@ -109,23 +118,10 @@ sub debug {
 		print "; $OS_STRING;" . ' Threads ' . 
 			($THREADED ? '' : 'UN' ) . "AVAILABLE\n";
 		print '-' x 80 . "\n";
-
 	}
 
 	$DEBUG = $d;
 }
-			 
-# Object Methods
-
-#DESTROY {
-#	my $self = shift;
-#
-#	foreach( @{$self->{threads}} ) {
-#		next	if ! $_->{thread}; # Why? It seems to iterate too much
-#		$_->{to_q}->enqueue( undef );
-#		$_->{thread}->detach;
-#	}
-#}
 
 sub new {
 	my $arg = shift;
@@ -135,7 +131,7 @@ sub new {
 	warn "Creating $class object"		if $DEBUG > 1;
 
 	# All of these are references so that we can clone()
-	# copies and any changes after the cloneing affect all
+	# copies and any changes after the cloning affect all
 	# clones.
 
 	$self->{this_username}	= \(my $a = 'Guest User');
@@ -155,6 +151,10 @@ sub new {
 	
 	return bless $self, $class;
 }
+
+################################################################################
+# Object Methods
+################################################################################
 
 sub clone {
 	my $self  = shift	or croak "Usage: clone E2INTERFACE_DEST, E2INTERFACE_SRC";
@@ -181,7 +181,7 @@ sub login {
 	my $self = shift		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
 	my $username = shift 		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
 	my $password = shift		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
-	
+
 	warn "E2::Interface::login\n"		if $DEBUG > 1;
 
 	return $self->thread_then(
@@ -194,7 +194,6 @@ sub login {
 			node => $E2::Ticker::xml_title{session}
 		],
 	sub {
-
 		my $xml = shift;
 
 		if( $xml =~ /<currentuser .*?user_id="(.*?)".*?>(.*?)</s ) {
@@ -363,16 +362,77 @@ sub parse_twig {
 	}
 }
 
+################################################################################
+#
+# Threading in e2interface.
+#
+# (The background thread)
+# 
+#	1: thread_then creates NUM background threads (sub _thread), each
+#	   with its own input and output queue
+#	2: each _thread waits for a two value list on its input queue:
+#		a. job_id
+#		b. reference to a list identical to the parameter list to
+#		   process_request_raw
+#	3: each _thread calls process_request_raw, then calls extract_cookie
+#	   and post_process on the response, and returns the following on
+#	   it output queue:
+#	   	a. job_id
+#	   	b. reference to a hash with the following keys:
+#	   		exception - exception string: only defined on exception
+#	   		cookie    - the return value of extract_cookie
+#	   		text      - the return value of post_process
+#
+# (The main thread) -- (these bubble upward from the lowlevel methods, so
+#                       this mainly ordered backward, but follows the return
+#                       values upward)
+#
+#	1: start_job takes the same parameters as process_request_raw. It
+#	   passes this list off to the first convenient background thread
+#	   and stores the job_id -> thread mapping. It returns (-1, job_id)
+#	2: process_request, if threading has been enabled, calls start_job
+#	   and returns (-1, job_id)
+#	3: thread_then takes two code references as parameters. It calls the
+#	   first code reference.
+#	   	a. if this reference returns (-1,job_id), it stores the second
+#		   reference to be executed when that first one finishes,
+#		   and to be passed its return value as its parameters.
+#		   This allows thread_then to be chained, each return value
+#		   passed to the next stored code reference.
+#		b. If this reference returns anything else, it passes this
+#		   value directly to the second code reference and then
+#		   returns the subsequent return value.
+#	   in effect, thread_then allows code to be executed regardless of
+#	   whether or not it calls a method that gets passed to a background
+#	   thread.
+#	4: finish checks the output queue of the background threads. If
+#	   the specified job hasn't finished yet, it returns (-1, job_id).
+#	   If it has finished, finish executes any stored code references
+#	   (those that thread_then stored). It returns the return value of
+#	   the final stored code reference.
+#
+################################################################################
+
 sub use_threads {
 	my $self = shift   or croak "Usage: use_threads E2INTERFACE [ COUNT ]";
 	my $count = shift || 1;
 
 	warn "E2::Interface::use_threads\n"	if $DEBUG > 1;
 
-	return undef	if !$THREADED;	
-	return undef	if $count < 1;
-	return undef	if ${$self->{threads}};
+	if( ! $THREADED ) {
+		warn "Unable to use_threads: ithreads not available" if $DEBUG;
+		return undef;
+	}
 
+	if( $count < 1 ) {
+		warn "Unable to use_threads: invalid number $count"  if $DEBUG;
+		return undef;
+	}
+
+	if( ${$self->{threads}} ) {
+		warn "Unable to use_threads: threads already in use" if $DEBUG;
+		return undef;
+	}
 
 	warn "Threading enabled (using $count thread" . 
 		($count > 1 ? 's' : '') . ")\n"		if $DEBUG;
@@ -399,6 +459,7 @@ sub use_threads {
 
 	return 1;
 
+	# _thread( INPUT_QUEUE, OUTPUT_QUEUE )
 
 	sub _thread {
 		my $from_q = shift;
@@ -670,6 +731,14 @@ sub start_job {
 	return (-1, $job);
 }
 
+################################################################################
+# Private, non-method subroutines
+################################################################################
+
+# Usage: my $cookie = extract_cookie( RESPONSE )
+#
+# Extracts a cookie from an LWP::UserAgent object.
+
 sub extract_cookie {
 	my $response = shift;
 	my $c = new HTTP::Cookies;
@@ -824,7 +893,6 @@ sub process_request_raw {
 1;
 __END__
 
-
 =head1 NAME
 
 E2::Interface - A client interface to the everything2.com collaborative database
@@ -895,6 +963,7 @@ The modules that compose e2interface are listed below and indented to show their
 			E2::Usersearch	- Search for writeups by user
 			E2::Session	- Session information
 			E2::ClientVersion - Client version information
+			E2::Scratchpad  - Load and update scratchpads
 
 See the manpages of each module for information on how to use that particular module.
 
@@ -1046,9 +1115,11 @@ C<logout> attempts to log the user out of Everything2.com.
 
 Returns true on success and C<undef> on failure.
 
-=item $e2-E<gt>process_request ATTR1 => VAL1 [, ATTR2 => VAL2 [, ...]]
+=item $e2-E<gt>process_request HASH
 
-C<process_request> assembles a URL based upon the specified ATTR and VAL pairs (example: C<process_request( node_id =E<gt> 124 )> would translate to "http://everything2.com/?node_id=124" (well, technically, a POST is used rather than a GET, but you get the idea)). It requests that page via HTTP and returns the text of the response (stripped of HTTP headers and with smart quotes and other MS weirdness replaced by the plaintext equivalents). It returns C<undef> on failure.
+C<process_request> assembles a URL based upon the key/value pairs in HASH (example: C<process_request( node_id =E<gt> 124 )> would translate to "http://everything2.com/?node_id=124" (well, technically, a POST is used rather than a GET, but you get the idea)).
+
+It requests that page via HTTP and returns the text of the response (stripped of HTTP headers and with smart quotes and other MS weirdness replaced by the plaintext equivalents). It returns C<undef> on failure.
 
 For those pages that may be retrieved with or without link parsing (conversion of "[link]" to a markup tag), this method uses this object's C<parse_links> setting.
 
@@ -1070,7 +1141,7 @@ C<clone> copies the cookie, domain, parse_links value, and agentstring, and it d
 
 C<clone> returns C<$self> if successful, otherwise returns C<undef>.
 
-=item E2::Interface::debug
+=item E2::Interface::debug [ LEVEL ]
 
 C<debug> sets the debug level of E2::Interface. This defaults to zero. This value is shared by all instances of e2interface classes.
 
@@ -1104,9 +1175,9 @@ C<this_user_id> returns the user_id of the current user. This is only available 
 
 =item $e2-E<gt>domain [ DOMAIN ]
 
-If DOMAIN is specified, C<domain> sets the domain used to fetch pages to DOMAIN. DOMAIN should contain neither an "http://" or a trailing "/".
+This method returns, and (if DOMAIN is specified) sets the domain used to fetch pages from e2. By default, this is "everything2.com".
 
-C<domain> returns the currently-used domain.
+DOMAIN should contain neither an "http://" or a trailing "/".
 
 =item $e2-E<gt>cookie [ COOKIE ]
 
@@ -1143,7 +1214,7 @@ Or:
 
 If COOKIE is not valid, this function returns C<undef> and the login cookie remains unchanged.
 
-=item $e2-E<gt>agentstring
+=item $e2-E<gt>agentstring [ AGENTSTRING ]
 
 C<agentstring> returns and optionally sets the value prependend to e2interface's agentstring, which is then used in HTTP requests.
 
@@ -1161,7 +1232,9 @@ Exceptions: 'Unable to process request', 'Parse error:'
 
 =item $e2-E<gt>use_threads [ NUMBER ]
 
-C<use_threads> creates a background thread (or NUMBER background threads) to be used to execute network-dependant methods. This method can only be called once for any instance (or set of C<clone>d instances), and must be disabled again (by a call to C<join_threads> or C<detach_threads>) before it can be re-enabled (this would be useful if you wanted to change the NUMBER of threads).
+C<use_threads> creates a background thread (or NUMBER background threads) to be used to execute network-dependant methods.
+
+This method can only be called once for any instance (or set of C<clone>d instances), and must be disabled again (by a call to C<join_threads> or C<detach_threads>) before it can be re-enabled (this would be useful if you wanted to change the NUMBER of threads).
 
 C<use_threads> returns true on success and C<undef> on failure.
 
@@ -1199,15 +1272,16 @@ L<E2::Node>,
 L<E2::E2Node>,
 L<E2::Writeup>,
 L<E2::User>,
-L<E2::Superdoc>
-L<E2::Usergroup>
-L<E2::Room>
+L<E2::Superdoc>,
+L<E2::Usergroup>,
+L<E2::Room>,
 L<E2::Ticker>,
 L<E2::Message>,
 L<E2::Search>,
 L<E2::UserSearch>,
 L<E2::ClientVersion>,
-L<E2::Session>
+L<E2::Session>,
+L<E2::Scratchpad>,
 L<http://everything2.com>,
 L<http://everything2.com/?node=clientdev>
 

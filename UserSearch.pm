@@ -14,7 +14,7 @@ use Carp;
 use E2::Ticker;
 use E2::Writeup;
 
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our @ISA = qw(E2::Ticker);
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 

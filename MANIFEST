@@ -16,6 +16,7 @@ UserSearch.pm
 Search.pm
 Session.pm
 ClientVersion.pm
+Scratchpad.pm
 t/available_rooms.xml
 t/best_users.xml
 t/client_version.xml

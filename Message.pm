@@ -1,6 +1,6 @@
 # E2::Message
 # Jose M. Weeks <jose@joseweeks.com>
-# 10 June 2003
+# 18 June 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,7 @@ use E2::Ticker;
 use E2::Node;	# for set_room
 
 our @ISA 	= "E2::Ticker";
-our $VERSION	= "0.31";
+our $VERSION	= "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 our %room_name_to_id  = (
@@ -314,15 +314,6 @@ sub set_room {
 	});
 }
 
-# FIXME:
-# 	 1: blab should be able to reply to specific writeups
-# 	 2: blab should be able to send multiple blab messages in one
-# 	    HTML request
-# 	 3: Consider allowing blabs and votes to be sent simultaneously (as
-# 	    they are on E2). Perhaps E2::Interface should cache requests for
-# 	    this sort of thing and then send them later. Or perhaps that's
-# 	    more an client thing to do (like vote-queueing).
-
 sub blab {
 	my $self    = shift	or croak "Usage: blab E2MESSAGE, USER_ID, TEXT [ , CC_BOOL ]";
 	my $user_id = shift	or croak "Usage: blab E2MESSAGE, USER_ID, TEXT [ , CC_BOOL ]";
@@ -365,44 +356,64 @@ sub blab {
 	return $self->process_request( %request );
 }
 
-# FIXME: archive, unarchive, ande delete should all allow multiple operands,
-# and possibly should allow all three types of requests to be bunched
-# together.
-
 sub archive {
-	my $self = shift	or croak "Usage: archive E2MESSAGE, MSG_ID";
-	my $msg_id = shift	or croak "Usage: archive E2MESSAGE, MSG_ID";
+	my $self = shift	or croak "Usage: archive E2MESSAGE, MSG_ID ...";
+	my @msgs = @_		or croak "Usage: archive E2MESSAGE, MSG_ID ...";
 
 	warn "E2::Message::archive\n"	if $DEBUG > 1;
 	
-	return $self->process_request(
-		"archive_$msg_id"	=> 'yup',
-		op			=> 'message'
-	);
+	my %req = ( op => 'message' );
+	
+	foreach( @msgs ) { $req{"archive_$_"} = 'yup' }
+
+	return $self->process_request( %req );
 }
 
 sub unarchive {
-	my $self = shift	or croak "Usage: unarchive E2MESSAGE, MSG_ID";
-	my $msg_id = shift	or croak "Usage: unarchive E2MESSAGE, MSG_ID";
+	my $self = shift  or croak "Usage: unarchive E2MESSAGE, MSG_ID ...";
+	my @msgs = @_	  or croak "Usage: unarchive E2MESSAGE, MSG_ID ...";
 
 	warn "E2::Message::unarchive\n"	if $DEBUG > 1;
 	
-	return $self->process_request(
-		"unarchive_$msg_id"	=> 'yup',
-		op			=> 'message'
-	);
+	my %req = ( op => 'message' );
+	
+	foreach( @msgs ) { $req{"unarchive_$_"} = 'yup' }
+
+	return $self->process_request( %req );
 }
 
 sub delete {
-	my $self = shift	or croak "Usage: delete E2MESSAGE, MSG_ID";
-	my $msg_id = shift	or croak "Usage: delete E2MESSAGE, MSG_ID";
+	my $self = shift	or croak "Usage: delete E2MESSAGE, MSG_ID ...";
+	my @msgs = @_		or croak "Usage: delete E2MESSAGE, MSG_ID ...";
 
 	warn "E2::Message::delete\n"	if $DEBUG > 1;
 	
-	return $self->process_request( 
-		"deletemsg_$msg_id"	=> "yup",
-		op			=> "message"
-	);
+	my %req = ( op => 'message' );
+	
+	foreach( @msgs ) { $req{"deletemsg_$_"} = 'yup' }
+
+	return $self->process_request( %req );
+}
+
+sub perform {
+	my $self = shift or croak "Usage: perform E2MESSAGE, HASH";
+	my %ops = @_     or croak "Usage: perform E2MESSAGE, HASH";
+
+	my %req = ( op => 'message' );
+
+	foreach( keys %ops ) {
+		if( lc($ops{$_}) eq 'delete' ) {
+			$req{"deletemsg_$_"} = 'yup';
+		} elsif( lc($ops{$_}) eq 'archive' ) {
+			$req{"archive_$_"}   = 'yup';
+		} elsif( lc($ops{$_}) eq 'unarchive' ) {
+			$req{"unarchive_$_"} = 'yup';
+		} else {
+			croak "Invalid operation: $_";
+		}
+	}
+
+	return $self->process_request( %req );
 }
 
 1;
@@ -532,19 +543,31 @@ C<blab> sends the private "blab" message MESSAGE_TEXT to user_id RECIPIANT_ID. I
 
 Exceptions: 'Unable to process request'
 
-=item $catbox-E<gt>archive MESSAGE_ID
+=item $catbox-E<gt>archive MSG_ID_LIST
 
-C<archive> attempts to archive the private message with the id MESSAGE_ID.
+=item $catbox-E<gt>unarchive MSG_ID_LIST
 
-=item $catbox-E<gt>unarchive MESSAGE_ID
+=item $catbox-E<gt>delete MSG_ID_LIST
 
-C<unarchive> attempts to unarchive the private message with the id MESSAGE_ID.
-
-=item $catbox-E<gt>delete MESSAGE_ID
-
-C<delete> permanently deletes the private message with id MESSAGE_ID from Everything2.com. Returns true on success and C<undef> on failure.
+These methods archive, unarchive, or permanently delete the messages in MSG_ID_LIST (this is a list of message ids).
 
 Exceptions: 'Unable to process request'
+
+=item $catbox-E<gt>perform HASH
+
+This method performs multiple archive, unarchive, and delete operations on a list of messages.
+
+HASH is organized as a hash of msg_id => operation pairs. Example:
+
+	$catbox->perform( 
+		100 => 'archive',
+		101 => 'unarchive',
+		102 => 'delete'
+	);
+
+If any operations besides "archive", "unarchive", and "delete" are specified, this method throws an "Invalid operation:" exception.
+
+Exceptions: 'Unable to process request', 'Invalid operation:'
 
 =item $catbox-E<gt>set_room ROOM_NAME
 

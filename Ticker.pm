@@ -1,6 +1,6 @@
 # E2::Ticker
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 17 June 2003
 #
 # See bottom for pod documentation.
 
@@ -10,11 +10,10 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
-use Data::Dumper;
 use E2::Interface;
 
 our @ISA = ("E2::Interface");
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 our %xml_title = (
@@ -568,45 +567,6 @@ sub maintenance_nodes {
 	return $self->parse( 'maintenance', $handlers, \@maintenance );
 }
 
-sub scratch_pad {
-	my $self = shift or croak "Usage: scratch_pad E2TICKER [, USER ]";
-	my $user_id = shift;
-	my %opt;
-
-	my $scratch = {};
-	
-	warn "E2::Ticker::scratch_pad"		if $DEBUG > 1;
-
-	# This method is freakish because it doesn't return a list. What this
-	# means is we're going to have to call parse() and then do some post-
-	# processing (which means we have to use thread_then)
-
-	$opt{scratch} = $user_id	if $user_id;
-
-	my $handlers = {
-		'scratchtxt' => sub {
-			(my $a, my $b) = @_;
-			$scratch = {
-				text => $b->text,
-				user => $b->{att}->{user},
-				public => $b->{att}->{public}
-			};
-		}
-	};
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'scratch',
-			$handlers,
-			[],	# dummy value for array
-			%opt
-		],
-		sub { return $scratch }
-	);
-}
-
 sub raw_vars {
 	my $self = shift	or croak "Usage: raw_vars E2TICKER";
 
@@ -861,18 +821,6 @@ This method returns a list of maintenance nodes (example: "E2 Nuke Request"). It
 
 Exceptions: 'Unable to process request', 'Parse error:'
 
-=item $ticker-E<gt>scratch_pad [ USER_ID ]
-
-This method returns the content of a user's scratch pad. If USER_ID is specified, it returns that user's scratch pad, otherwise it returns the currently-logged-in user's scratch pad.
-
-It returns a hashref with the following keys:
-
-	user	# Username
-	public	# Boolean: Is this scratchpad pubically shared?
-	text	# The text of the scratchpad
-
-Exceptions: 'Unable to process request', 'Parse error:'
-
 =item $ticker-E<gt>raw_vars
 
 This method returns a hashref to the current user's "raw vars" hash on E2. It consists of a number of key/value pairs.
@@ -927,6 +875,7 @@ L<E2::Usersearch>,
 L<E2::Message>,
 L<E2::Session>,
 L<E2::ClientVersion>,
+L<E2::Scratchpad>,
 L<http://everything2.com>,
 L<http://everything2.com/?node=clientdev>
 

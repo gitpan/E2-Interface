@@ -14,7 +14,7 @@ use Carp;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -156,7 +156,7 @@ C<new> creates a new C<E2::Usergroup> object. Until that object is logged in in 
 
 =item $group-E<gt>clear
 
-C<clear> clears all the information currently stored in $node. 
+C<clear> clears all the information currently stored in $group. 
 
 =item $group-E<gt>description
 

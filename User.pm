@@ -14,7 +14,7 @@ use HTML::Entities;
 
 use E2::Node;
 
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our @ISA = qw(E2::Node);
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 

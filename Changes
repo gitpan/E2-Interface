@@ -1,5 +1,36 @@
 Revision history for Perl extension e2interface.
 
+0.32 Wed Jun 18 2003
+			- Removed E2::Ticker::scratch_pad and created
+			  E2::Scratchpad, adding the ability to update
+			  scratchpads.
+
+			- Various documentation tweaking and updating
+			  (writing a script to autoupdate online docs)
+
+			- Added the ability to use multiple parameters
+			  in calls to the E2::Message methods archive,
+			  unarchive, and delete; added E2::Message::perform
+			  to allow a list of messages to be archived,
+			  unarchived, and deleted all in the same HTTP request.
+
+			- Added E2::Writeup::vote (basically redundant
+			  with E2::E2Node::vote, but E2::Writeup should
+			  have the method as well for the sake of
+			  intuitiveness (intuititon?).
+
+			- Added E2::Writeup::reply
+
+			- E2::E2Nodes now call clone() on any E2::Writeups
+			  they create.
+
+			- Created generate_e2_docs, a script that automatically
+			  keeps e2interface's online documentation up-to-date
+			  with each release.
+
+			- Fixed a bug in E2::Writeup::update that caused a
+			  run-time error.
+
 0.31  Tue Jun 10 2003
 			- Fixed a bug in E2::Interface::extract_cookie
 			  introduced in 0.30--the method was writing

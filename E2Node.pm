@@ -15,7 +15,7 @@ use E2::Node;
 use E2::Writeup;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -150,6 +150,7 @@ sub twig_handlers {
 			(my $a, my $b) = @_;
 
 			my $wu = new E2::Writeup;
+			$wu->clone( $self );
 			$wu->parse( $b );
 
 			if( $self->logged_in &&
@@ -288,6 +289,8 @@ sub create {
 	});
 }
 
+# FIXME: Allow multiple votes/replies/etc. in one request.
+
 sub vote {
 	my $self = shift or croak "Usage: vote E2E2NODE, NODE_ID => VOTE [ , NODE_ID2 = VOTE2 [ , ... ] ]";
 	my %list = @_    or croak "Usage: vote E2E2NODE, NODE_ID => VOTE [ , NODE_ID2 = VOTE2 [ , ... ] ]";
@@ -303,12 +306,12 @@ sub vote {
 			op		=> "vote",
 			displaytype	=> "xmltrue");
 
-	foreach my $id ( keys %list ) {
-		my $v = $list{$id};
+	foreach( keys %list ) {
+		my $v = $list{$_};
 
 		if( $v != 1 && $v != -1 ) { next; }
 
-		$params{ "vote__" . $id } = $v;
+		$params{ "vote__$_" } = $v;
 	}
 
 	return $self->thread_then(
@@ -324,7 +327,7 @@ sub vote {
 			croak 'Invalid document';
 		}
 
-		return $self->load_from_xml( $r );
+		return  $self->load_from_xml( $r );
 	});
 }
 
@@ -435,10 +438,11 @@ These methods each return a list of hashrefs. C<list_softlinks> and C<list_firml
 
 These return empty lists if the current node has none of the respective softlinks, firmlinks, or sametitles, or C<undef> if there is no node currently loaded.
 
-
 =item $node-E<gt>list_writeups
 
 C<list_writeups> returns a list of E2::Writeups corresponding to the writeups in the currently-loaded node. It returns an empty list if this node contains no writeups, and C<undef> if there is no node currently loaded.
+
+NOTE: All E2::Writeups returned by these methods are C<clone>d from $node, and therefore share the same login cookie, background threads, etc.
 
 =item $node-E<gt>get_writeup [ NUM ]
 
@@ -447,6 +451,8 @@ C<list_writeups> returns a list of E2::Writeups corresponding to the writeups in
 =item $node-E<gt>get_my_writeup
 
 These methods return references to E2::Writeup objects. C<get_writeup> returns the NUM'th writeup in the current node (or, if NUM is not specified, the writeup immediately succeeding the last writeup returned by C<get_writeup>). C<get_writeup_by_author> returns the writeup in the current node that was written by AUTHOR. C<get_my_writeup> returns the writeup in the current node written by the currently-logged-in user. See the E2::Writeup manpage for information about accessing writeup data.
+
+NOTE: All E2::Writeups returned by these methods are C<clone>d from $node, and therefore share the same login cookie, background threads, etc.
 
 These methods return C<undef> if they cannot return a writeup.
 
@@ -469,8 +475,6 @@ In the process of voting, the current node is re-fetched and re-loaded, and if t
 Exceptions: 'Unable to process request', 'Invalid document'
 
 =item $node-E<gt>add_writeup TEXT, TYPE [ , NODISPLAY ]
-
-B<THIS IS UNTESTED. NOT EVEN ONCE.>
 
 C<add_writeup> adds a new writeup to the current node. TEXT is the text of the writeup, TYPE is the type of writeup it is (one of: "person", "place", "thing", or "idea"), and NODISPLAY, if true (it defaults to false), tells E2 not to display this writeup in "New Writeups". It returns true on success and C<undef> on failure.
 

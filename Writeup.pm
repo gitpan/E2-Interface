@@ -1,6 +1,6 @@
 # E2::Writeup
 # Jose M. Weeks <jose@joseweeks.com>
-# 05 June 2003
+# 18 June 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,7 @@ use HTML::Entities;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -183,6 +183,106 @@ sub cool {
 	});
 }
 
+sub vote {
+	my ($self, $vote) = @_;
+	
+	if( $vote != -1 && $vote != 1 ) {
+		croak "Usage: vote E2WRITEUP, -1 | 1";
+	}
+
+	warn "E2::Writeup::vote\n"	if $DEBUG > 1;
+	
+	if( !$self->logged_in ) {
+		warn "Unable to vote: not logged in"		if $DEBUG;
+		return undef;
+	}
+
+	if( $self->this_user_id == $self->author_id ) {
+		warn "Unable to vote on your own writeup"	if $DEBUG;
+		return undef;
+	}
+
+	if( $self->rep->{cast} ) {
+		warn "Unable to vote on a writeup more than once" if $DEBUG;
+		return undef;
+	}
+
+	my %req = (
+		node_id				=> $self->node_id,
+		op				=> 'vote',
+		displaytype			=> 'xmltrue',
+		'vote__' . $self->node_id	=> $vote
+	);
+
+	return $self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			%req
+		],
+	sub {
+		my $r = shift;
+
+#		if( !($r =~ /<node /s ) ) {
+#			return undef;
+#		}
+
+		# Parse, and if it parses, return rep->{cast}.
+
+		return undef if ! $self->load_from_xml( $r );
+		return $self->rep->{cast} || 0;
+	});
+}
+
+sub reply {
+	my $self = shift	or croak "Usage: reply E2WRITEUP, TEXT [, CC ]";
+	my $text = shift	or croak "Usage: reply E2WRITEUP, TEXT [, CC ]";
+	my $cc   = shift;
+	
+	warn "E2::Writeup::reply\n"	if $DEBUG > 1;
+
+	if( !$self->logged_in ) {
+		warn "Unable to reply: not logged in"		if $DEBUG;
+		return undef;
+	}
+
+	if( !$self->exists ) {
+		warn "Unable to reply: no writeup loaded"	if $DEBUG;
+		return undef;
+	}
+
+	my $id = $self->node_id;
+	my %req = (
+		node_id		  => $id,
+		op		  => 'vote',
+		"msgwuauthor_$id" => $text
+	);
+
+	$req{"ccmsgwuauthor_$id"} = 1 if $cc;
+	
+	$self->thread_then(
+		[
+			\&E2::Interface::process_request,
+			$self,
+			%req
+		],
+	sub {
+		my $r = shift;
+
+		# Simple test. We can't send messages if we specify
+		# displaytype=xmltrue, so we're stuck with the HTML
+		# page. Hopefully any page formatting/theme issues
+		# won't break this if we keep it small.
+
+		if( ($r =~ /\(sent writeup message/s) &&
+		    ($r =~ /you said "re/s) ) {
+		    	return 1;
+		}
+
+		return 0;
+	});
+}
+	
 sub update {
 	my $self = shift	or croak "Usage: update_writeup E2WRITEUP, TEXT [ , TYPE ]";
 	my $text = shift	or croak "Usage: update_writeup E2WRITEUP, TEXT [ , TYPE ]";
@@ -211,7 +311,7 @@ sub update {
 	}
 
 	if( !$type_s ) {
-		$type_s = $self->wutype;
+		$type_s = $self->wrtype;
 	}
 	
 	$type = $h{ lc( $type_s ) };
@@ -225,19 +325,22 @@ sub update {
 		[
 			\&E2::Interface::process_request,
 			$self,
-			node_id 	=> $self->{node_id},
+			node_id 	=> $self->node_id,
 			writeup_wrtype_writeuptype => $type,
-			displaytype	=> "xmltrue",
+		#	displaytype	=> "xmltrue",
+			sexisgood	=> "submit",
 			writeup_doctext	=> $text
 		],
 	sub {
 		my $r = shift;
 
-		if( !($r =~ /<node /s ) ) {
-			return undef;
-		}
+#		if( !($r =~ /<node /s ) ) {
+#			return undef;
+#		}
+#
+#		return $self->load_from_xml( $r );
 
-		return $self->load_from_xml( $r );
+		return 1;
 	});
 }
 
@@ -312,13 +415,23 @@ E2::Writeup - A module for accessing, updating, and cooling writeups.
 	print "\nAuthor: " . $writeup->author;
 	print "\nDoctext: " . $writeup->text;
 
+	# Downvote the writeup
+
+	$writeup->vote( -1 );
+	
 	# Cool the writeup
 
 	$writeup->cool;
 
+	# Reply to the writeup's author
+
+	$writeup->reply( "I just downvoted and cooled your writeup" );
+
 	# Update the writeup
 
-	$writeup->update( $writeup->text . "THIS TEXT APPENDED TO WRITEUP" );
+	$writeup->update( 
+		$writeup->text . "THIS TEXT APPENDED TO WRITEUP"
+	);
 
 =head1 DESCRIPTION
 
@@ -344,30 +457,30 @@ C<new> creates a new C<E2::E2Node> object. Until that object is logged in in one
 
 C<clear> clears all the information currently stored in $writeup. It returns true.
 
-=item $writeup-E<gt>wrtype;
+=item $writeup-E<gt>wrtype
 
-=item $writeup-E<gt>parent;
+=item $writeup-E<gt>parent
 
-=item $writeup-E<gt>parent_id;
+=item $writeup-E<gt>parent_id
 
-=item $writeup-E<gt>marked;
+=item $writeup-E<gt>marked
 
-=item $writeup-E<gt>cool_count;
+=item $writeup-E<gt>cool_count
 
-=item $writeup-E<gt>text;
+=item $writeup-E<gt>text
 
 These methods return, respectively, the writeup's type, its parent's title, its parent's node_id, its "marked for destruction" status (boolean: is it marked for destruction?), the number of C!s it has received, and the text of the writeup. 
 
-=item $writeup-E<gt>cools;
+=item $writeup-E<gt>cools
 
 This method returns a list of the users who've cooled this writeup. Each item in the list is a hashref with the following keys:
 
 	name
 	id
 
-=item $writeup-E<gt>rep;
+=item $writeup-E<gt>rep
 
-This method returns a hashref concerning the reputation of this writeup with the following keys:
+This method returns a hashref concerning the reputation of this writeup. It contains the following keys:
 
 	up	# Upvotes
 	down	# Downvotes
@@ -380,7 +493,31 @@ This method attempts to cool (C!) a writeup. If NODE_ID is specified, it attempt
 
 Exceptions: 'Unable to process request'
 
-=item $node-E<gt>update TEXT [ , TYPE ]
+=item $writeup-E<gt>vote -1 | 1
+
+This method attempts to vote on this writeup (-1 for a downvote, 1 for an upvote).
+
+This method returns C<undef> if unable to vote (if the user is trying to vote on his own writeup, if a writeup hasn't been C<load>ed to vote on, or if the user has already voted on this writeup). It also returns C<undef> if it encounters a server error.
+
+This method returns 1 if the vote "caught," and 0 if it did not (which probably means the user is out of votes).
+
+Exceptions: 'Unable to process request', 'Invalid document', 'Parse error:'
+
+=item $writeup-E<gt>reply TEXT [, CC ]
+
+This method sends a "blab" message reply to the author of the currently-loaded writeup. If CC is true, it sends a copy of the message to you, the sender.
+
+This method returns C<undef> if no writeup is loaded or if we're currently not logged in (Guest User can't send messages). It returns true on success and 0 on failure (0 means it didn't get the response confirmation it expected--the message may have gone through anyway).
+
+There is no guarantee, if either an exception is raised or this method returns 0, that the message didn't go through. There is, however, a guarantee that if it returns C<undef>, it did not. 
+
+One strategy for determining success absolutely would be to (1) always set CC as true, (2) after replying, use E2::Message::list_private to list received messages, and check to make sure the message made it through, and (3) delete the cc'd message.
+
+This, of course, may be a bit drastic.
+
+Exceptions: 'Unable to process request'
+
+=item $writeup-E<gt>update TEXT [ , TYPE ]
 
 C<update> updates the currently-loaded writeup. TYPE, which defaults to the type the writeup was prior to the update, is the type of writeup this is (one of: "person", "place", "thing", or "idea"). During the update, the writeup is re-loaded, so any changes should be immediately visible in this object.
 

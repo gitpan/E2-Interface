@@ -14,7 +14,7 @@ use Carp;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.31";
+our $VERSION = "0.32";
 our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
@@ -128,7 +128,7 @@ C<new> creates a new C<E2::Room> object. Until that object is logged in in one w
 
 =item $room-E<gt>clear
 
-C<clear> clears all the information currently stored in $group.
+C<clear> clears all the information currently stored in $room.
 
 =item $room-E<gt>description
 

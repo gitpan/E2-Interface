@@ -1,4 +1,4 @@
-use Test::Simple tests => 14;
+use Test::Simple tests => 15;
 
 use E2::Interface;	ok 1;
 use E2::Node;		ok 1;
@@ -14,3 +14,4 @@ use E2::Search;		ok 1;
 use E2::UserSearch;	ok 1;
 use E2::Session;	ok 1;
 use E2::ClientVersion;	ok 1;
+use E2::Scratchpad;	ok 1;
