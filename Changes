@@ -1,5 +1,41 @@
 Revision history for Perl extension e2interface.
 
+0.31  Tue Jun 10 2003
+			- Fixed a bug in E2::Interface::extract_cookie
+			  introduced in 0.30--the method was writing
+			  directly to a reference rather than to the
+			  data the reference pointed to
+
+			- Simplified E2::Ticker::parse()
+
+			- Modified E2::Ticker and its descendants to be
+			  reentrant (or at least _more_ reentrant--strange
+			  things still might happen if one uses multiple
+			  threads AND calls more than one "update" type of
+			  methods simultaneously AND doesn't use 
+			  E2::Interface::thread_then() to retrieve the data
+			  immediately upon completion)
+
+			- Added E2::Ticker::use_string()--we can now load
+			  tickers from xml strings rather than directly
+			  from the e2 servers, if we wish
+
+			- Added E2::UserSearch::compare() and stats(), so
+			  E2::UserSearch can now do nodetracker-like
+			  comparisons
+
+			- Added threading to the list of data that is cloned
+			  by a call to E2::Interface::clone(), so background
+			  threads can now be shared between multiple objects
+
+			- Added E2::Interface::debug() and debugging info to
+			  all classes of e2interface
+
+			- Added E2::Interface::join_threads() and
+			  E2::Interface::detach_threads() to allow threads
+			  to be finished (getting tired of those "A thread
+			  exited while 14 other threads were still running"
+			  warnings.
 
 0.30  Wed May 14 2003
 			- Added multithreading for all network-dependant
@@ -49,7 +85,7 @@ Revision history for Perl extension e2interface.
 			- Standardized the exception handling and documented
 			  possible exceptions for each method.
 
-			- Split E2::User into E2::User ande E2::UserSearch.
+			- Split E2::User into E2::User and E2::UserSearch.
 
 			- Added E2::Usergroup and E2::Superdoc.
 

@@ -1,6 +1,6 @@
 # E2::UserSearch
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -14,8 +14,9 @@ use Carp;
 use E2::Ticker;
 use E2::Writeup;
 
-our $VERSION = "0.30";
+our $VERSION = "0.31";
 our @ISA = qw(E2::Ticker);
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 sub new;
 sub clear;
@@ -38,6 +39,8 @@ sub new {
 sub clear {
 	my $self = shift or croak "Usage: clear E2USERSEARCH";
 
+	warn "E2::UserSearch::clear\n"	if $DEBUG > 1;
+
 	$self->{lastuser} 	= undef;	# username of last user searched
 	@{ $self->{writeups} } 	= ();		# list of E2::Writeup
 
@@ -51,12 +54,17 @@ sub writeups {
 	my $count = shift;
 	my $startat = shift;
 
-	if( !$user ) { return undef; }
+	warn "E2::UserSearch::writeups\n"	if $DEBUG > 1;
+	
+	if( !$user ) { 
+		warn "No user specified and not logged in" if $DEBUG;
+		return undef;
+	}
 
-	my %options;
+	my %opt;
 
-	$options{searchuser} = $user;
-	$options{startat} = $startat	if $startat;
+	$opt{searchuser} = $user;
+	$opt{startat} = $startat	if $startat;
 
 	if( $sort_by ) {
 		$sort_by = lc($sort_by);
@@ -65,16 +73,16 @@ sub writeups {
 			croak "Invalid search option: $sort_by";
 		}
 
-		$options{sort} = $sort_by;
+		$opt{sort} = $sort_by;
 	} else {
-		$options{nosort} = 1;
+		$opt{nosort} = 1;
 		$sort_by = "none";
 	}
 
 	if( $count && $count == -1 ) { # Get all
-		$options{nolimit} = 1;
+		$opt{nolimit} = 1;
 	} elsif( $count ) {
-		$options{count} = $count;
+		$opt{count} = $count;
 	}
 
 	$user = lc( $user );
@@ -103,7 +111,6 @@ sub writeups {
 			$wu->{marked}	= $b->{att}->{marked};
 			$wu->{hidden}	= $b->{att}->{hidden};
 			$wu->{wrtype}	= $b->{att}->{wrtype};
-
 
 			$wu->{cool_count} = $b->{att}->{cools};
 
@@ -140,18 +147,14 @@ sub writeups {
 		}
 	};
 
-	return $self->thread_then(
-		[
-			\&E2::Ticker::parse,
-			$self,
-			'usersearch',
-			$handlers,
-			%options
-		],
-	sub {
-		$self->{lastuser} = $user;
-		return @{ $self->{writeups} };
-	});
+	@{$self->{writeups}} = (); # clear
+
+	return $self->parse(
+		'usersearch',
+		$handlers,
+		$self->{writeups},
+		%opt
+	);
 }
 
 sub sort_results {
@@ -162,7 +165,10 @@ sub sort_results {
 
 	my $sort;
 
+	warn "E2::UserSearch::sort_results\n"	if $DEBUG > 1; 
+
 	# Define a bunch of sort routines
+	# (This whole thing is a mess..... ugly...... but it works)
 
 	sub sort_by_creation {
 		$b->{createtime} =~ /(....)-(..)-(..) (..):(..):(..)/;
@@ -249,6 +255,124 @@ sub sort_results {
 	return splice @sorted, $startat, $count;
 }
 
+sub compare {
+	my $self  = shift or croak "Usage: compare E2USERSEARCH, OLDUSERSEARCH";
+	my $old   = shift or croak "Usage: compare E2USERSEARCH, OLDUSERSEARCH";
+
+	warn "E2::UserSearch::compare\n"	if $DEBUG > 1;
+
+	if( ! $self->{writeups} || ! $old->{writeups} ) {
+		warn"Usersearch not loaded"	if $DEBUG;
+		return undef;
+	}
+
+	my $stats;
+	my @changes;
+
+	# Build a mapping of node_id to node for $old
+
+	my %map;
+
+	foreach( @{$old->{writeups}} ) {
+		$map{$_->id} = $_;
+	}
+
+	foreach( $self->sort_results( 'rep' ) ) {
+
+		my $writeup = {
+			title	=> $_->title,
+			rep	=> $_->rep,
+			cools	=> $_->cool_count
+		};
+
+		# Get stats
+
+		my $r = $_->rep->{total};
+
+		if( !defined $stats->{min_rep} || $r < $stats->{min_rep} ) {
+			$stats->{min_rep} = $r;
+		}
+
+		if( !defined $stats->{max_rep} || $r > $stats->{max_rep} ) {
+			$stats->{max_rep} = $r;
+		}
+
+		# Store statistics
+
+		$stats->{total_rep} += $r;
+		$stats->{total_cools} += $_->cool_count;
+		$stats->{$_->wrtype} += 1;
+
+		# Get changes
+
+		my $id = $_->node_id;
+		my $changed = undef;
+	
+		if( !$map{$id} ) { # New writeup (not yet stored)
+			$writeup->{new} = 1;
+			$writeup->{change_up}		= $_->rep->{up};
+			$writeup->{change_down}		= $_->rep->{down};
+			$writeup->{change_cools}	= $_->cool_count;
+
+			$changed = 1;
+
+		} else {
+		
+			sub wr_diff {
+				my ($a, $b) = @_;
+				return $a->rep->{up} != $b->rep->{up} ||
+					$a->rep->{down} != $b->rep->{down} ||
+					$a->cool_count != $b->cool_count;
+			}
+
+			if( wr_diff( $_, $map{$id} ) ) {
+			
+				$writeup->{change_up} = $_->rep->{up} -
+					$map{$id}->rep->{up};
+				$writeup->{change_down} = $_->rep->{down} -
+					$map{$id}->rep->{down};
+				$writeup->{change_cools} = $_->cool_count -
+					$map{$id}->cool_count;
+
+				$changed = 1;
+			}
+
+			if( $_->title ne $map{$id}->title ) {
+				$writeup->{old_title} = $map{$id}->title;
+			
+				$changed = 1;
+			}
+
+			delete $map{$id};
+		}
+		
+		push @changes, $writeup		if $changed;
+	}
+
+	# Now store removed writeups
+
+	foreach( keys %map ) {
+		push @changes, {
+			title => $_->title,
+			rep   => $_->rep,
+			cools => $_->cools,
+			removed => 1
+		}
+	}
+		
+	# Store
+
+	$self->{stats} = $stats;
+
+	return @changes;
+}
+
+sub stats {
+	my $self = shift	or croak "Usage: stats E2USERSEARCH";
+
+	return $self->{stats};
+}
+
 1;
 __END__
 
@@ -275,9 +399,9 @@ E2::UserSearch - A module for listing and sorting a user's writeups
 
 	print "All Simpleton's writeups:\n";
 	print "-------------------------\n";
-	foreach my $n (@w) {
-		print $n->title . " : " . $n->rep->{total};
-		print " : " . $n->cool_count . "C!" if $n->cool_count;
+	foreach( @w ) {
+		print $_->title . " : " . $_->rep->{total};
+		print " : " . $_->cool_count . "C!" if $_->cool_count;
 		print "\n";
 	}
 
@@ -289,12 +413,11 @@ E2::UserSearch - A module for listing and sorting a user's writeups
 
 	print "\nAll Simpleton's writeups, sorted by cools:\n";
 	print "------------------------------------------\n";
-	foreach my $n (@w) {
-		print $n->title . " : " . $n->rep->{total};
-		print " : " . $n->cool_count . "C!"  if $n->cool_count;
+	foreach( @w ) {
+		print $_->title . " : " . $_->rep->{total};
+		print " : " . $_->cool_count . "C!"  if $_->cool_count;
 		print "\n";
 	}
-
 
 =head1 DESCRIPTION
 
@@ -359,6 +482,38 @@ SORT_BY can be one of 'rep', 'title', 'creation', 'cools', or 'random', as well 
 C<sort_results> returns a list of E2::Writeup.  These do not contain doctext (C<$writeup-E<gt>text>), hold dummy values for C! (so C<$writeup-E<gt>cools> returns the correct value only in a scalar context), and may not have any C<$writeup-E<gt>rep> information.
 
 Exceptions: 'Invalid sort type:'
+
+=item $user-E<gt>compare OLD_USER_SEARCH
+
+This method compares this E2::UserSearch with another, returning a list of hashrefs corresponding to each writeup that differs between the two. Each element of the list may have the following keys:
+
+	title		# Title of the writeup
+	node_id		# node_id of the writeup
+	rep		# Hashref with the keys: up, down, total, and cast
+	cools		# C! count
+
+	change_up	# Number of additional upvotes
+	change_down	# Number of additional downvotes
+	change_cools	# Number of additional C!s
+
+	old_title	# Former title of the writeup (if title has changed)
+	new		# Boolean: Is this writeup new?
+	removed		# Boolean: Has this writeup been removed (nuked)?
+
+C<compare> also has the side-effect of storing various statistical information about the usersearch, which is then available by calling C<stats>.
+
+=item $user-E<gt>stats
+
+This method returns statistical information about this usersearch. This is loaded by calling C<compare>. It returns a hashref with the folowing keys:
+
+	max_rep		# The highest reputation of any of this user's writeups
+	min_rep		# The lowest reputation of any of this user's writeups
+	total_cools	# The accumulated number of C!s this user has received
+
+	person		# The number of writeups this user has of type 'person'
+	place		# ditto for 'place'
+	thing		# and 'thing'
+	idea		# and 'idea'
 
 =back
 

@@ -1,6 +1,6 @@
 # E2::Interface
 # Jose M. Weeks <jose@joseweeks.com>
-# 14 May 2003
+# 10 June 2003
 #
 # See bottom for pod documentation.
 
@@ -9,6 +9,7 @@ package E2::Interface;
 use 5.006;
 use strict;
 use warnings;
+use Exporter;
 use Carp;
 use LWP::UserAgent;
 use HTTP::Request::Common qw(GET HEAD POST);
@@ -16,6 +17,7 @@ use HTTP::Cookies;
 use URI::Escape;
 use Unicode::String;
 use XML::Twig;
+use Data::Dumper;
 
 use E2::Ticker;
 
@@ -27,8 +29,12 @@ eval "
 	use Thread::Queue;
 ";
 our $THREADED = !$@;
-
-our $VERSION = "0.30";
+our $DEBUG	= 0;	# Debug info: set to 1 for basic debug info,
+			#             2 to add a message for each sub,
+			#             3 to add data dumping
+our $VERSION = "0.31";
+our @ISA = ("Exporter");
+our @EXPORT = qw($DEBUG);
 
 # Get OS string
 
@@ -91,22 +97,42 @@ sub client_name {
 	return "e2interface-perl";
 }
 
+sub debug {
+	my $d = shift;
+
+	if( $d && !$DEBUG ) {
+
+		print '-' x 80 . "\n";
+		print &client_name . '/' . &version . 
+			" by Jose M. Weeks <jose\@joseweeks.com> (Simpleton)\n";
+		printf "Perl v%vd", $^V;
+		print "; $OS_STRING;" . ' Threads ' . 
+			($THREADED ? '' : 'UN' ) . "AVAILABLE\n";
+		print '-' x 80 . "\n";
+
+	}
+
+	$DEBUG = $d;
+}
+			 
 # Object Methods
 
-DESTROY {
-	my $self = shift;
-
-	foreach( @{$self->{threads}} ) {
-		next	if ! $_->{thread}; # Why? It seems to iterate too much
-		$_->{to_q}->enqueue( undef );
-		$_->{thread}->detach;
-	}
-}
+#DESTROY {
+#	my $self = shift;
+#
+#	foreach( @{$self->{threads}} ) {
+#		next	if ! $_->{thread}; # Why? It seems to iterate too much
+#		$_->{to_q}->enqueue( undef );
+#		$_->{thread}->detach;
+#	}
+#}
 
 sub new {
 	my $arg = shift;
 	my $class = ref( $arg ) || $arg;
 	my $self = {};
+
+	warn "Creating $class object"		if $DEBUG > 1;
 
 	# All of these are references so that we can clone()
 	# copies and any changes after the cloneing affect all
@@ -121,6 +147,12 @@ sub new {
 	$self->{parse_links}	= \(my $e);
 	$self->{domain}		= \(my $f = "everything2.com" );
 
+	$self->{threads}	= \(my $ta);
+	$self->{next_job_id}	= \(my $tb = 1);
+	$self->{job_to_thread}	= \(my $tc);
+	$self->{post_commands}	= \(my $td);
+	$self->{finished}	= \(my $te);
+	
 	return bless $self, $class;
 }
 
@@ -128,13 +160,20 @@ sub clone {
 	my $self  = shift	or croak "Usage: clone E2INTERFACE_DEST, E2INTERFACE_SRC";
 	my $src   = shift	or croak "Usage: clone E2INTERFACE_DEST, E2INTERFACE_SRC";
 
+	warn "E2::Interface::clone\n"		if $DEBUG > 1;
+
 	$self->{agentstring} 	= $src->{agentstring};
 	$self->{this_username}	= $src->{this_username};
 	$self->{this_user_id}	= $src->{this_user_id};
 	$self->{parse_links}	= $src->{parse_links};
 	$self->{domain}		= $src->{domain};
 	$self->{cookie}		= $src->{cookie};
-
+	$self->{threads}	= $src->{threads};
+	$self->{next_job_id}	= $src->{next_job_id};
+	$self->{job_to_thread}	= $src->{job_to_thread};
+	$self->{post_commands}	= $src->{post_commands};
+	$self->{finished}	= $src->{finished};
+	
 	return $self;
 }
 
@@ -142,6 +181,8 @@ sub login {
 	my $self = shift		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
 	my $username = shift 		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
 	my $password = shift		or croak( "Usage: login E2INTERFACE, USERNAME, PASSWORD" );
+	
+	warn "E2::Interface::login\n"		if $DEBUG > 1;
 
 	return $self->thread_then(
 		[ 
@@ -170,6 +211,8 @@ sub login {
 sub verify_login {
 	my $self = shift;
 
+	warn "E2::Interface::verify_login\n"	if $DEBUG > 1;
+
 	return undef	if !$self->logged_in;
 
 	return $self->thread_then(
@@ -195,6 +238,8 @@ sub verify_login {
 sub logout {
 	my $self = shift 	or croak "Usage: logout E2INTERFACE";
 
+	warn "E2::Interface::logout\n"		if $DEBUG > 1;
+
 	$self->cookie( undef );
 	${$self->{this_username}} = 'Guest User';
 	${$self->{this_user_id}}  = undef;
@@ -208,10 +253,12 @@ sub process_request {
 	my %pairs = @_
 		or croak "Usage: process_request E2INTERFACE, [ ATTR => VAL [ , ATTR2 => VAL2 , ... ] ]";
 
-# If we're dealing with threads, send a process_request message
+	warn "E2::Interface::process_request\n"		if $DEBUG > 1;
 
-	if( $self->{threads} ) {
-		$self->start_job(
+	# If we're dealing with threads, send a process_request message
+
+	if( ${$self->{threads}} ) {
+		return $self->start_job(
 			'POST',
 			'http://' . $self->domain . '/',
 			$self->cookie,
@@ -219,8 +266,6 @@ sub process_request {
 			($self->parse_links ? () : (links_noparse => 1)),
 			%pairs
 		);
-
-		return -1;
 	}
 
 	# Otherwise, just process the request
@@ -271,7 +316,7 @@ sub cookie {
 		${$self->{cookie}} = $_[0];
 
 		if( $_[0] =~ /(.*?)%257C/ ) {
-			$self->{this_username} = $1;
+			${$self->{this_username}} = $1;
 		}
 	}
 
@@ -303,6 +348,8 @@ sub document {
 sub parse_twig {
 	if( @_ != 3 ) { croak "Usage: parse_twig E2INTERFACE, XML, HANDLERS"; }
 	
+	warn "E2::Interface::parse_twig\n"	if $DEBUG > 1;
+
 	my ( $self, $xml, $handlers ) = @_;
 
 	my $twig = new XML::Twig(
@@ -317,16 +364,20 @@ sub parse_twig {
 }
 
 sub use_threads {
-	my $self = shift   or croak "Usage: use_threads E2INTERFACE [, COUNT ]";
+	my $self = shift   or croak "Usage: use_threads E2INTERFACE [ COUNT ]";
 	my $count = shift || 1;
+
+	warn "E2::Interface::use_threads\n"	if $DEBUG > 1;
 
 	return undef	if !$THREADED;	
 	return undef	if $count < 1;
-	return undef	if $self->{threads};
+	return undef	if ${$self->{threads}};
 
-	$self->{next_job_id} = 1;
 
-	@{$self->{threads}} = ();
+	warn "Threading enabled (using $count thread" . 
+		($count > 1 ? 's' : '') . ")\n"		if $DEBUG;
+
+	${$self->{threads}} = [];
 	for( my $i = 0; $i < $count; $i++ ) {
 		my %t = (
 			to_q	=> Thread::Queue->new,
@@ -339,7 +390,11 @@ sub use_threads {
 			$t{from_q}
 		);
 
-		push @{$self->{threads}}, \%t;
+		if( ! $t{thread} ) {
+			croak "Unable to create thread";
+		}
+
+		push @{${$self->{threads}}}, \%t;
 	}
 
 	return 1;
@@ -349,11 +404,15 @@ sub use_threads {
 		my $from_q = shift;
 		my $to_q   = shift;
 		my $id;
-		
+
+		warn "Spawned new thread\n"	if $DEBUG;
+
 		while( $id = $from_q->dequeue ) {
 			my $req = $from_q->dequeue;
 			my $resp;
 			my %r : shared;
+
+			warn "Processing job $id"	if $DEBUG > 1;
 
 			eval { $resp = process_request_raw( @$req ) };
 			if( $@ ) {
@@ -368,10 +427,52 @@ sub use_threads {
 	}
 }
 
-sub job_id {
-	my $self = shift	or croak "Usage: job_id E2INTERFACE";
+sub join_threads {
+	my $self = shift;
 
-	return $self->{job};
+	foreach( @{${$self->{threads}}} ) {
+		$_->{to_q}->enqueue( 0 );
+		$_->{thread}->join;
+	}
+
+	# Finish the jobs
+
+	my @r; my @i;
+	while( @i = $self->finish ) { push @r, \@i if $i[0] ne "-1" }
+
+	# Dismantle the threading
+
+	$self->{threads}	= \(my $ta);
+	$self->{next_job_id}	= \(my $tb = 1);
+	$self->{job_to_thread}	= \(my $tc);
+	$self->{post_commands}	= \(my $td);
+	$self->{finished}	= \(my $te);
+
+	return @r;
+}
+
+sub detach_threads {
+	my $self = shift;
+	
+	foreach( @{${$self->{threads}}} ) {
+		$_->{to_q}->enqueue( 0 );
+		$_->{thread}->detach;
+	}
+
+	# Finish all jobs that are ready to be finished
+
+	my @r; my @i;
+	while( @i = $self->finish ) { push @r, \@i if $i[0] ne "-1" }
+
+	# Dismantle the threading
+
+	$self->{threads}	= \(my $ta);
+	$self->{next_job_id}	= \(my $tb = 1);
+	$self->{job_to_thread}	= \(my $tc);
+	$self->{post_commands}	= \(my $td);
+	$self->{finished}	= \(my $te);
+
+	return @r;
 }
 
 sub thread_then {
@@ -379,6 +480,10 @@ sub thread_then {
 	my $cmd  = shift;
 	my $post = shift;
 	
+	warn "E2::Interface::thread_then\n"	if $DEBUG > 1;
+	
+#	warn 'Dump of $cmd:' . Dumper( $cmd )	if $DEBUG > 2;
+	warn 'Adding post-command'		if $post && $DEBUG > 2;	
 	my @response;
 
 	# Run command. If not threaded, run its post command and
@@ -391,17 +496,18 @@ sub thread_then {
 		@response = &$cmd( @_ );
 	}
 	
-	if( $response[0] ne "-1" ) {
+	if( !$response[0] || $response[0] ne "-1" ) {
 		return &$post( @response );
 	}
 
 	# If we're here, we called a threaded routine. Add the post
 	# command to its caller's list
 
-	my $id = $self->job_id;
-	push @{$self->{post_commands}->{$id}}, $post;
+	warn "Job deferred and assigned id $response[1]"	if $DEBUG > 2;
+
+	push @{${$self->{post_commands}}->{$response[1]}}, $post;
 	
-	return -1;
+	return @response;
 }
 
 sub finish {
@@ -410,19 +516,63 @@ sub finish {
 
 	my $response;
 
-	# First, check to see if we've already pulled this job off the
+	warn "E2::Interface::finish\n"		if $DEBUG > 1;
+	warn "Job id = $job"			if $DEBUG > 2;
+
+	# If $job is undefined, find the first job to return and return it
+
+	if( ! defined $job ) {
+
+		# Get it off the list of finished jobs, if possible;
+
+		(my $k) = keys %{${$self->{finished}}};
+		if( $k ) {
+			warn "Job previously finished, returning" if $DEBUG > 2;
+			$response = delete ${$self->{finished}}->{$k};
+
+		# Otherwise, check all the queues for finished jobs
+
+		} else {
+			my $pending = 0;
+			
+			for( my $i = 0; $i < @{${$self->{threads}}}; $i++ ) {
+				my $q = ${$self->{threads}}->[$i]->{from_q};
+				my $pending += $q->pending;	
+				my $id = $q->dequeue_nb;
+
+				if( $id ) { # Got one
+					$response = $q->dequeue;
+					last;
+				}
+			}
+
+			if( ! $response ) {
+				if( ! $pending ) { # No jobs pending
+					return ();
+				}
+
+				# Return non-specific deferred
+
+				return (-1, -1);
+			}
+		}
+		
+	# Otherwise, check to see if we've already pulled this job off the
 	# queue.
 
-	if( $self->{finished}->{$job} ) {
-		$response = $self->{finished}->{$job};
-		delete $self->{finished}->{$job};
-	}	
+	} elsif( ${$self->{finished}}->{$job} ) {
+		warn "Job previously finished, returning"	if $DEBUG > 2;
+		$response = ${$self->{finished}}->{$job};
+		delete ${$self->{finished}}->{$job};
 
 	# Otherwise, get it off the queue (if we can)
 
-	else {	
-		my $thr = $self->{job_to_thread}->{$job};
-		return undef if !$thr;
+	} else {
+		my $thr = ${$self->{job_to_thread}}->{$job};
+		
+		warn "Unable to find thread for job $job" if $DEBUG && !$thr;
+		
+		return () if !$thr;
 
 		while( my $id = $thr->{from_q}->dequeue_nb ) {
 
@@ -430,12 +580,14 @@ sub finish {
 
 			my $r = $thr->{from_q}->dequeue;
 		
+			warn "Retrieved job $id"	if $DEBUG > 2;
+
 			if( $id == $job ) {	# The right job?
 				$response = $r;
 				last;
 			} else {
 				# Store for later
-				$self->{finished}->{$id} = $r;
+				${$self->{finished}}->{$id} = $r;
 			}
 		}
 		
@@ -444,8 +596,8 @@ sub finish {
 		# (tell the caller that the command is still deferred).
 
 		if( ! $response ) {
-			$self->{job} = $job;
-			return -1;
+			warn "Deferring job $job"	if $DEBUG > 2;
+			return (-1, $job);
 		}
 	}
 
@@ -454,7 +606,7 @@ sub finish {
 
 	if( $response->{exception} ) {
 		croak $response->{exception};
-	}	
+	}
 
 	# Now, finish the command and return
 
@@ -470,12 +622,15 @@ sub finish {
 	my @param = ( $response->{text} );
 	my @ret   = ( $response->{text} );
 	
-	while( my $c = shift @{$self->{post_commands}->{$job}} ) {
+	warn "Executing " . scalar @{${$self->{post_commands}}->{$job}} .
+		"post-commands"		if $DEBUG > 2;
+
+	while( my $c = shift @{${$self->{post_commands}}->{$job}} ) {
 		@ret = &$c( @param );
 		@param = @ret;
 	}
 	
-	delete $self->{post_commands}->{$job};
+	delete ${$self->{post_commands}}->{$job};
 	
 	return ( $job, @ret );
 }
@@ -483,13 +638,15 @@ sub finish {
 sub start_job {
 	my $self = shift;
 
+	warn "E2::Interface::start_job\n"	if $DEBUG > 1;
+	
 	# Find the first open thread, or the one with the
 	# least jobs pending.
 
 	my $min = 9999;
-	my $thr = $self->{threads}->[0];
+	my $thr = ${$self->{threads}}->[0];
 
-	foreach( @{$self->{threads}} ) {
+	foreach( @{${$self->{threads}}} ) {
 		if( !$_->{to_q}->pending ) {
 			$thr = $_;
 			last;
@@ -501,23 +658,31 @@ sub start_job {
 
 	# Send the message
 
-	$self->{job} = $self->{next_job_id}++;
+	my $job = ${$self->{next_job_id}}++;
 	my @job : shared = @_;
 
-	$thr->{to_q}->enqueue( $self->{job}, \@job );
+	warn "Handing $job off to $thr"		if $DEBUG > 2;
 
-	$self->{job_to_thread}->{$self->{job}} = $thr;
+	$thr->{to_q}->enqueue( $job, \@job );
 
-	return -1;
+	${$self->{job_to_thread}}->{$job} = $thr;
+
+	return (-1, $job);
 }
 
 sub extract_cookie {
 	my $response = shift;
 	my $c = new HTTP::Cookies;
+
+	warn "E2::Interface::extract_cookie\n"		if $DEBUG > 1;
+	
 	$c->extract_cookies( $response );
 	$c->as_string =~ /userpass=(.*?);/;
 	if( $1 && $1 eq '""' ) { return undef; } # Sometimes the server returns
-	                                         # userpass=""; if so, discard
+						 # userpass=""; if so, discard
+
+	warn "Cookie found: $1"				if $1 && $DEBUG > 2;
+	
 	return $1;
 }
 
@@ -529,6 +694,8 @@ sub extract_cookie {
 sub post_process {
 	my $resp = shift	or croak "Usage: post_process RESPONSE";
 
+	warn "E2::Interface::post_process\n"	if $DEBUG > 1;
+	
 	my $s = $resp->as_string;
 
 	# Strip HTTP headers
@@ -597,9 +764,15 @@ sub process_request_raw {
 	my $agentstr	= shift;
 	my %pairs = @_;
 
+	warn "E2::Interface::process_request_raw\n"	if $DEBUG > 1;
+	
 	my $str = client_name . '/' . version . " ($OS_STRING)";
 	$str = "$agentstr $str" if $agentstr;
 	
+	warn "\$req = $req\n\$url = $url\n\$cookie = $cookie\n" .
+		"\$agentstr = $agentstr\nAttribute pairs:" . Dumper( \%pairs )
+			if $DEBUG > 2;
+
 	my $agent = LWP::UserAgent->new(
 		agent		=> $str,
 		cookie_jar	=> HTTP::Cookies->new
@@ -679,7 +852,7 @@ E2::Interface - A client interface to the everything2.com collaborative database
 
 	my $page = $e2->process_request( 
 		node_id => 124,
-		display_type => "xmltrue"
+		displaytype => "xmltrue"
 	);
 
 	# Now send a chatterbox message using the current
@@ -772,9 +945,9 @@ All methods list which exceptions (besides 'Usage:') that they may potentially t
 
 Network access is slow. Methods that rely upon network access may hold control of your program for a number of seconds, perhaps even minutes. In an interactive program, this sort of wait may be unacceptable.
 
-e2interface supports a limited form of multithreading (in versions of perl that support ithreads--i.e. 5.8.0 and later) that allows network-dependant members to be called in the background and their return values to be retrieved later on. This is turned on by calling C<use_threads> on an instance of any class derived from E2::Interface. After doing so, any method that relies on network access will return -1 and be executed in the background.
+e2interface supports a limited form of multithreading (in versions of perl that support ithreads--i.e. 5.8.0 and later) that allows network-dependant members to be called in the background and their return values to be retrieved later on. This is enabled by calling C<use_threads> on an instance of any class derived from E2::Interface (threading is C<clone>d, so C<use_threads> affects all instances of e2interface classes that have been C<clone>d from one-another). After enabling threading, any method that relies on network access will return (-1, job_id) and be executed in the background.
 
-The id of the background job can then be retrieved by calling C<job_id>, and the return value can be retrieved by passing the id to C<finish>. If the method has not yet completed, C<finish> returns -1. If the method has completed, C<finish> returns a list consisting of the job_id followed by the return value of the method.
+This job_id can then be passed to C<finish> to retrieve the return value of the method. If, in the call to C<finish>, the method has not yet completed, it returns (-1, job_id). If the method has completed, C<finish> returns a list consisting of the job_id followed by the return value of the method.
 
 A code reference can be also be attached to a background method. See C<thread_then>.
 
@@ -787,16 +960,15 @@ A simple example of threading in e2interface:
 	$catbox->use_threads;	# Turn on threading
 
 	my @r = $catbox->list_public; # This will run in the background
-	my $id = $catbox->job_id;
 
 	while( $r[0] eq "-1" ) { # While method deferred (use a string
 				 # comparison--if $r[0] happens to be
 				 # a string, you'll get a warning when
 				 # using a numeric comparison)
-
+		
 		# Do stuff here........
 
-		@r = $catbox->finish( $id );
+		@r = $catbox->finish( $r[1] ); # $r[1] == job_id
 	}
 
 	# Once we're here, @r contains: ( job_id, return value )
@@ -804,7 +976,7 @@ A simple example of threading in e2interface:
 	shift @r;			# Discard the job_id
 
 	foreach( @r ) {	
-		print $_->{text};	# Print out each chatterbox message
+		print $_->{text};	# Print out each message
 	}
 
 Or, the same thing could be done using C<thread_then>:
@@ -817,10 +989,10 @@ Or, the same thing could be done using C<thread_then>:
 
 	# Execute $catbox->list_public in the background
 
-	$catbox->thread_then( [ \&E2::Message::list_public ],
+	$catbox->thread_then( [\&E2::Message::list_public, $self],
 
-		# This subroutine will be called when list_public finishes,
-		# and will be passed its return value in @_
+		# This subroutine will be called when list_public
+		# finishes, and will be passed its return value in @_
 
 		sub {
 			foreach( @_ ) {
@@ -831,8 +1003,6 @@ Or, the same thing could be done using C<thread_then>:
 			# be retrieved in the call to finish() below.
 		}
 	);
-
-	my $id = $catbox->job_id;
 
 	# Do stuff here.....
 
@@ -896,15 +1066,31 @@ C<clone> copies various members from the C<E2::Interface>-derived object OBJECT 
 	$node = new E2::Node;
 	$node->clone( $msg )
 
-C<clone> copies the cookie, domain, parse_links value, and agentstring, and it does so in such a way that if any of the clones (or the original) change any of these values, the changes will be propogated to all the others.
+C<clone> copies the cookie, domain, parse_links value, and agentstring, and it does so in such a way that if any of the clones (or the original) change any of these values, the changes will be propogated to all the others. It also clones background threads, so these threads are shared among cloned objects.
 
 C<clone> returns C<$self> if successful, otherwise returns C<undef>.
 
-=item $e2-E<gt>client_name
+=item E2::Interface::debug
+
+C<debug> sets the debug level of E2::Interface. This defaults to zero. This value is shared by all instances of e2interface classes.
+
+Debug levels (each displays all messages from levels lower than it):
+
+	0 : No debug information displayed
+	1 : E2::Interface info displayed once; vital debug messages
+	    displayed (example: trying to perform an operation that
+	    requires being logged in will cause a debug message if
+	    you're not logged in)
+	2 : Each non-trivial subroutine displays its name when called
+	3 : Important data structures are displayed as processed
+
+Debug messages are output on STDERR.
+
+=item E2::Interface::client_name
 
 C<client_name> return the name of this client, "e2interface-perl".
 
-=item $e2-E<gt>version
+=item E2::Interface::version
 
 C<version> returns the version number of this client.
 
@@ -975,27 +1161,35 @@ Exceptions: 'Unable to process request', 'Parse error:'
 
 =item $e2-E<gt>use_threads [ NUMBER ]
 
-C<use_threads> creates a background thread (or NUMBER background threads) to be used to execute network-dependant methods. These are specific to their particular instance (i.e. they can't be C<clone>d). This method can only be called once for any instance, and once threading has been enabled, it can't be disabled again.
+C<use_threads> creates a background thread (or NUMBER background threads) to be used to execute network-dependant methods. This method can only be called once for any instance (or set of C<clone>d instances), and must be disabled again (by a call to C<join_threads> or C<detach_threads>) before it can be re-enabled (this would be useful if you wanted to change the NUMBER of threads).
 
 C<use_threads> returns true on success and C<undef> on failure.
 
-=item $e2->E<gt>job_id
+=item $e2-E<gt>join_threads
 
-C<job_id> returns the job_id of the most recently deferred method.
+=item $e2-E<gt>detach_threads
+
+These methods disable e2interface's threading for an instance or a set of C<clone>d instances. C<join_threads> waits for the background threads to run through the remainder of their queues before destroying them. C<detach_threads> detaches the threads immediately, discarding any incomplete jobs on the queue.
+
+Both methods process any finished jobs that have not yet been C<finish>ed and return a list of these jobs. i.e.:
+
+	my @r; my @i;
+	while( @i = $e2->finish ) { push @r, \@i if $i[0] ne "-1" }
+	return @r;
 
 =item $e2-E<gt>finish [ JOB_ID ]
 
-C<finish> handles all post-processing of deferred methods (see C<thread_then> for information on adding post-processing to a method), and attempts to return the return value of a deferred method. If JOB_ID is specified, it attempts to return the return value of that method, otherwise it attempts to return the return value of the first completed method on its queue.
+C<finish> handles all post-processing of deferred methods (see C<thread_then> for information on adding post-processing to a method), and attempts to return the return value of a deferred method. If JOB_ID is specified, it attempts to return the return value of that job, otherwise it attempts to return the return value of the first completed job on its queue.
 
-It returns a list consisting of the job_id of the deferred method followed by the return value of the method in list context. If JOB_ID is specified and the corresponding method is not yet completed, this method returns -1. If JOB_ID is not specified, and there are methods left on the deferred queue but none of them are completed, it returns -1. It returns C<undef> if the deferred queue is empty.
+It returns a list consisting of the job_id of the deferred method followed by the return value of the method in list context. If JOB_ID is specified and the corresponding method is not yet completed, this method returns -1. If JOB_ID is not specified, and there are methods left on the deferred queue but none of them are completed, it returns (-1, -1). If the deferred queue is empty, it returns an empty list.
 
 =item $e2-E<gt>thread_then METHOD, CODE
 
-C<thread_then> executes METHOD (which is a reference to an array that consists of a method and its parameters, e.g.: [ \&E2::Node::load, $title, $type ]), and sets up CODE (a code reference) to be passed the return value of METHOD when METHOD completes.
+C<thread_then> executes METHOD (which is a reference to an array that consists of a method and its parameters, e.g.: [ \&E2::Node::load, $e2, $title, $type ]), and sets up CODE (a code reference) to be passed the return value of METHOD when METHOD completes.
 
 C<thread_then> is named as a sort of mnemonic device: "thread this method, then do this..."
 
-C<thread_then> returns -1 if METHOD is deferred; if METHOD is not deferred, thread_then immediately passes its return value to CODE and then returns the return value of CODE. This allows code to be written that can be run as either threaded or unthreaded; indeed this is how e2interface is implemented internally.
+C<thread_then> returns (-1, job_id) if METHOD is deferred; if METHOD is not deferred, thread_then immediately passes its return value to CODE and then returns the return value of CODE. This allows code to be written that can be run as either threaded or unthreaded; indeed this is how e2interface is implemented internally.
 
 =back
 

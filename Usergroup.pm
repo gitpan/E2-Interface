@@ -1,6 +1,6 @@
 # E2::Usergroup
 # Jose M. Weeks <jose@joseweeks.com>
-# 04 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -14,7 +14,8 @@ use Carp;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.30";
+our $VERSION = "0.31";
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
 
@@ -46,6 +47,8 @@ sub new {
 sub clear {
 	my $self = shift	or croak "Usage: clear E2USERGROUP";
 
+	warn "E2::Usergroup::clear\n"	if $DEBUG > 1;
+	
 	@{ $self->{members} } = ();
 	@{ $self->{weblog} }  = ();
 	$self->{description}  = undef;

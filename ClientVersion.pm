@@ -1,6 +1,6 @@
 # E2::ClientVersion
 # Jose M. Weeks <jose@joseweeks.com>
-# 16 March 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -14,8 +14,9 @@ use Carp;
 use E2::Ticker;
 use XML::Twig;
 
-our $VERSION = "0.21";
+our $VERSION = "0.31";
 our @ISA = qw(E2::Ticker);
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 sub new;
 
@@ -41,6 +42,8 @@ sub clients {
 
 sub update {
 	my $self = shift or croak "Usage: update E2CLIENTVERSION";
+
+	warn "E2::ClientVersion::Update\n"	if $DEBUG > 1;
 
 	my $handlers = {
 		'client' => sub {
@@ -68,7 +71,8 @@ sub update {
 
 	return $self->parse(
 		'clientversions',
-		$handlers
+		$handlers,
+		[ 1 ]
 	);
 }
 

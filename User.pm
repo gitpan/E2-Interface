@@ -1,6 +1,6 @@
 # E2::User
 # Jose M. Weeks <jose@joseweeks.com>
-# 04 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -14,8 +14,9 @@ use HTML::Entities;
 
 use E2::Node;
 
-our $VERSION = "0.30";
+our $VERSION = "0.31";
 our @ISA = qw(E2::Node);
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 sub new;
 sub clear;
@@ -53,6 +54,8 @@ sub new {
 
 sub clear {
 	my $self = shift or croak "Usage: clear E2USER";
+
+	warn "E2::User::clear\n"	if $DEBUG > 1;
 
 	$self->{alias}		= undef;
 	$self->{alias_id}	= undef;

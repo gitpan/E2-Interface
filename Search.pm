@@ -1,6 +1,6 @@
 # E2::Search
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -13,8 +13,9 @@ use Carp;
 
 use E2::Ticker;
 
-our $VERSION = "0.30";
+our $VERSION = "0.31";
 our @ISA = qw(E2::Ticker);
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 sub new { 
 	my $arg   = shift;
@@ -31,6 +32,10 @@ sub search {
 	my $keywords = shift or croak "Usage: search E2SEARCH, KEYWORDS [, NODETYPE ] [, MAX_RESULTS ]";
 	my $nodetype = shift || 'e2node';
 	my $max_results = shift;
+
+	my @results;
+
+	warn "E2::Search::search\n"	if $DEBUG > 1;
 
 	my %opt = (
 		keywords => $keywords,
@@ -50,10 +55,9 @@ sub search {
 			(my $a, my $b) = @_;
 			if( !$self->{max_results} || 
 			    !$self->{results} || 
-			    $self->{max_results} > 
-			    scalar @{$self->{results}} ) {
+			    $self->{max_results} > @results ) {
 
-				push @{ $self->{results} }, {
+				push @results, {
 					title => $b->text, 
 					node_id =>$b->{att}->{node_id}
 				};
@@ -64,19 +68,8 @@ sub search {
 
 	$self->{keywords} = undef;
 	$self->{searchtype} = undef;
-	@{ $self->{results} } = ();
-
-	return $self->thread_then(
-		[
-			\&E2::Ticker::parse,
-			$self,
-			'search',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{results} };
-	});
+	
+	return $self->parse( 'search', $handlers, \@results, %opt );
 }
 
 1;

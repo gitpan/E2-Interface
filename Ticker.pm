@@ -1,6 +1,6 @@
 # E2::Ticker
 # Jose M. Weeks <jose@joseweeks.com>
-# 01 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -10,10 +10,12 @@ use 5.006;
 use strict;
 use warnings;
 use Carp;
+use Data::Dumper;
 use E2::Interface;
 
-our @ISA = "E2::Interface";
-our $VERSION = "0.30";
+our @ISA = ("E2::Interface");
+our $VERSION = "0.31";
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 our %xml_title = (
 	interfaces	=> "XML Interfaces Ticker",
@@ -61,20 +63,49 @@ sub new {
 	my $self  = $class->SUPER::new();
 
 	$self->{xml_interfaces} = \%xml_title;
+
+	$self->{ticker_string} = undef;
 	
 	bless( $self, $class );
 	return $self;
 }
 
+sub use_string {
+	my $self = shift or croak "Usage: use_string E2TICKER, STRING";
+	my $string = shift;
+
+	$self->{ticker_string} = $string;
+}
+
 # This method is private (undocumented). It should not be called from
-# anywhere but derived classes.
+# anywhere except internally or in derived classes.
+# 
+# It takes the following parameters:
+# 	E2TICKER	- $self
+# 	TYPE		- Type of ticker to load
+# 	HANDLERS	- a reference to a hash of twig parsers
+# 	LISTREF		- a reference to the list we want to return
+#	OPTIONS		- set of attr, val pairs used in the POST request
 
 sub parse {
-	my $self = shift or croak "Usage: parse E2TICKER, TYPE, TWIG_HANDLERS, [ OPTIONS ]";
-	my $type = shift or croak "Usage: parse E2TICKER, TYPE, TWIG_HANDLERS, [ OPTIONS ]";
-	my $handler = shift or croak "Usage: parse E2TICKER, TYPE, TWIG_HANDLERS, [ OPTIONS ]";
+	croak "Usage: parse E2TICKER, TYPE, HANDLERS, LISTREF, [ OPTIONS ]"
+		if @_ < 4;
+		
+	my $self = shift;
+	my $type = shift;
+	my $handlers = shift;
+	my $listref = shift;
 
-	$type = lc($type);
+	warn "E2::Ticker::parse\n"	if $DEBUG > 1;
+	warn "Parsing $type ticker:\n" . Dumper( $handlers )
+		if $DEBUG > 2;
+
+	# Sanity check
+
+	if( ref $handlers ne 'HASH' || ref $listref ne 'ARRAY' ) {
+		croak "Usage: parse E2TICKER, TYPE, HANDLERS, LISTREF, " .
+			"[ OPTIONS ]";
+	}
 
 	# Note: The exception below will only be raised if there are
 	# bugs in e2interface, unless applications are calling
@@ -87,23 +118,32 @@ sub parse {
 		croak "Invalid ticker type: $type";
 	}
 
-	my $r = "";
-	
-	# This is here for testing only. If we want to load our tickers
-	# from a file instead of from e2, we set $self->{xml_file_test}
-	# to the reference to the file handle.
+	# Usage: workarounds TYPE, XML_STRING
 
-	if( $self->{xml_file_test} ) {
-	
-		my $h = $self->{xml_file_test};
+	sub workarounds {
+		my $t = shift;
+		my $r = shift;
+		
+		# WORKAROUNDS for bugs in the e2 ticker output.
+		# (these should be removed as things are patched
+		# up serverside.)
 
-		while( my $l = <$h> ) { $r .= $l; } # slurp file
-	
-		$self->parse_twig( $r, $handler );
-
-		return 1;
+		if( $t eq 'coolnodes' ) {
+			$r =~ s/&/&amp;/sg;
+		}
+		
+		return $r;
 	}
 
+	# This is here in case (for some oddball reason) someone wants
+	# to load a ticker from a text string. This is used for the test
+	# cases, and probably for cacheing and so on...
+
+	if( my $s = $self->{ticker_string} ) {
+		$self->{ticker_string} = undef;
+		$self->parse_twig( workarounds( $type, $s ), $handlers );
+		return @$listref;
+	}
 	
 	# Otherwise, do the normal thing, which is to load the
 	# node from e2.
@@ -115,27 +155,18 @@ sub parse {
 			node => $title,
 			@_
 		],
-	sub {
-		my $r = shift;
-		
-		# FIXME!!!
-		#
-		# This is a workaround, and I really don't like this, but
-		# some usernames contain "&" and they make the parser vomit
-
-		if( $type eq 'coolnodes' ) {
-			$r =~ s/&/&amp;/sg;
+		sub {
+			$self->parse_twig(workarounds($type,shift), $handlers);
+			return @$listref;
 		}
-
-		$self->parse_twig( $r, $handler );
-	
-		return 1;
-	});
+	);
 }
 
 sub load_interfaces {
 	my $self = shift or croak "Usage: interfaces E2TICKER";
 
+	warn "E2::Ticker::load_interfaces\n"	if $DEBUG > 1;
+	
 	my $handlers = {
 		'this' => sub {
 			(my $a, my $b) = @_;
@@ -149,10 +180,10 @@ sub load_interfaces {
 		}
 	};
 
-
 	# Since we're loading a URL instead of a node or node_id,
 	# we're going to have to do this one without the help
-	# of E2::Interface::process_request.
+	# of E2::Interface::process_request, and therefore without
+	# E2::Ticker::parse.
 
 	# If we're working threaded, we have to do it the hard way
 
@@ -207,6 +238,10 @@ sub new_writeups {
 
 	my %opt;
 
+	my @writeups;
+
+	warn "E2::Ticker::new_writeups"		if $DEBUG > 1;
+
 	$opt{count} = $count	if $count;
 
 	my $handlers = 	{
@@ -229,30 +264,21 @@ sub new_writeups {
 			$wu->{parent} = $c->text;
 			$wu->{parent_id} = $c->{att}->{node_id};
 			
-			push @{ $self->{writeups} }, $wu;
+			push @writeups, $wu;
 		}
 	};
 
-
-	@{ $self->{writeups} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'newwriteups',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{writeups} };
-	});
+	return $self->parse( 'newwriteups', $handlers, \@writeups, %opt );
 }
 
 sub other_users {
 	my $self = shift or croak "Usage: other_users E2TICKER [, ROOM_ID ]";
 	my $room = shift;
+
+	my @users;
 	
+	warn "E2::Ticker::other_users"		if $DEBUG > 1;
+
 	my %opt = ( nosort => 1 );
 	$opt{in_room} = $room	if $room;
 	
@@ -276,33 +302,24 @@ sub other_users {
 				$user->{room_id} = $c->{att}->{node_id};
 			}
 
-			push @{ $self->{users} }, $user;
+			push @users, $user;
 		}
 	};
 
-
-	@{ $self->{users} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'otherusers',
-			$handlers,
-			%opt
-		],
-	sub {
-		return sort { $b->{xp} <=> $a->{xp} } @{$self->{users}};
-	});
+	return $self->parse( 'otherusers', $handlers, \@users, %opt );
 }
 
 sub random_nodes {
 	my $self = shift or croak "Usage: random_nodes E2TICKER";
 
+	my @random;
+
+	warn "E2::Ticker::random_nodes"		if $DEBUG > 1;
+
 	my $handlers = {
 		'e2link' => sub {
 			(my $a, my $b) = @_;
-			push @{ $self->{random} }, {
+			push @random, {
 				title => $b->text,
 				id =>    $b->{att}->{node_id}
 			};
@@ -313,19 +330,7 @@ sub random_nodes {
 		}
 	};
 
-	@{ $self->{random} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'random',
-			$handlers,
-		],
-	sub {
-		return @{ $self->{random} };
-
-	});
+	return $self->parse( 'random', $handlers, \@random );
 }
 
 sub cool_nodes {
@@ -334,6 +339,10 @@ sub cool_nodes {
 	my $cooled_by = shift;
 	my $count = shift;
 	my $offset = shift;
+
+	my @cools;
+
+	warn "E2::Ticker::cool_nodes"		if $DEBUG > 1;
 
 	my %opt;
 
@@ -361,29 +370,20 @@ sub cool_nodes {
 			$cool->{cooledby}	= $c->text;
 			$cool->{cooledby_id}	= $c->{att}->{node_id};
 
-			push @{ $self->{cools} }, $cool;
+			push @cools, $cool;
 		}
 	};
 
-
-	@{ $self->{cools} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'coolnodes',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{cools} };
-	});
+	return $self->parse( 'coolnodes', $handlers, \@cools, %opt );
 }
 
 sub editor_cools {
 	my $self = shift or croak "Usage: editor_cools E2TICKER [, COUNT ]";
 	my $count = shift;
+
+	my @edcools;
+	
+	warn "E2::Ticker::editor_cools"		if $DEBUG > 1;
 
 	my %opt;
 
@@ -403,23 +403,11 @@ sub editor_cools {
 			$cool->{title}	= $c->text;
 			$cool->{id}	= $c->{att}->{node_id};
 
-			push @{ $self->{edcools} }, $cool;
+			push @edcools, $cool;
 		}
 	};
 
-	@{ $self->{edcools} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'edcools',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{edcools} };
-	});
+	return $self->parse( 'edcools', $handlers, \@edcools, %opt );
 }
 
 sub time_since {
@@ -427,7 +415,11 @@ sub time_since {
 	my @users = @_;
 	my $string = undef;
 
+	my @timesince;
+	
 	my %opt;
+
+	warn "E2::Ticker::time_since"		if $DEBUG > 1;
 
 	my $handlers = {
 		'now' => sub {
@@ -444,7 +436,7 @@ sub time_since {
 			$user->{name} = $c->text;
 			$user->{id} = $c->{att}->{node_id};
 
-			push @{ $self->{timesince} }, $user;
+			push @timesince, $user;
 		}
 	};
 
@@ -463,88 +455,43 @@ sub time_since {
 		%opt = ( $key => join ',', @users );
 	}
 
-	@{ $self->{timesince} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'timesince',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{timesince} };
-	});
+	return $self->parse( 'timesince', $handlers, \@timesince, %opt );
 }
 
 sub available_rooms {
 	my $self = shift or croak "Usage: available_rooms E2TICKER";
 
+	my @rooms = ( { title => 'outside', id => undef } );
+	
+	warn "E2::Ticker::available_rooms"		if $DEBUG > 1;
+
 	my $handlers = {
 		'outside/e2link' => sub {
 			(my $a, my $b) = @_;
-			@{ $self->{rooms} }[0] = {
+			$rooms[0] = {
 				title	=> $b->text,
 				id	=> $b->{att}->{node_id}
 			};
 		},
 		'roomlist/e2link' => sub {
 			(my $a, my $b) = @_;
-			push @{ $self->{rooms} }, {
+			push @rooms, {
 				title	=> $b->text,
 				id	=> $b->{att}->{node_id}
 			};
 		}
 	};
 
-	@{ $self->{rooms} } = ( { title => "outside", id => undef } );
-	
-	$self->parse(
-		'rooms',
-		{
-			'outside/e2link' => sub {
-				(my $a, my $b) = @_;
-				@{ $self->{rooms} }[0] = {
-					title	=> $b->text,
-					id	=> $b->{att}->{node_id}
-				};
-			},
-			'roomlist/e2link' => sub {
-				(my $a, my $b) = @_;
-				push @{ $self->{rooms} }, {
-					title	=> $b->text,
-					id	=> $b->{att}->{node_id}
-				};
-			}
-		}
-	);
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'rooms',
-			$handlers
-		],
-	sub {
-
-		# If "go outside" wasn't specified, return undef
-
-		if( !defined @{ $self->{rooms} }[0]->{id} ) {
-			return undef;
-		}
-
-		return @{ $self->{rooms} };
-	});
+	return $self->parse( 'rooms', $handlers, \@rooms );
 }
-
-# NOTE: EBU Ticker currently uses a user's setting to determine the
-# noadmins setting and ignores the ebu_noadmins flag. This is a
-# server-side bug.
 
 sub best_users {
 	my $self = shift or croak "Usage: best_users E2TICKER [, NOGODS ]";
 	my $nogods = shift;
+
+	my @bestusers;
+	
+	warn "E2::Ticker::best_users"		if $DEBUG > 1;
 
 	my %opt;
 	$opt{ebu_noadmins} = 1	if $nogods;
@@ -557,7 +504,7 @@ sub best_users {
 			my $usr = $b->first_child( 'e2link' );
 			my $lvl = $b->first_child( 'level' );
 				
-			push @{ $self->{bestusers} }, {
+			push @bestusers, {
 				experience   => $exp->text,
 				writeups     => $wri->text,
 				id           => $usr->{att}->{node_id},
@@ -568,25 +515,16 @@ sub best_users {
 		}
 	};
 
-	@{ $self->{bestusers} } = ();
-	
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'bestusers',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{bestusers} };
-	});
+	return $self->parse( 'bestusers', $handlers, \@bestusers, %opt );
 }
 
 sub node_heaven {
 	my $self = shift or croak "Usage: node_heaven E2TICKER [, NODE_ID ]";
 	my $node_id = shift;
 
+	my @heaven;
+
+	warn "E2::Ticker::node_heaven"		if $DEBUG > 1;
 
 	if( !$self->logged_in ) { return undef; }
 
@@ -597,7 +535,7 @@ sub node_heaven {
 	my $handlers = {
 		'nodeangel' => sub {
 			(my $a, my $b) = @_;
-			push @{ $self->{heaven} }, {
+			push @heaven, {
 				title => $b->{att}->{title},
 				id    => $b->{att}->{node_id},
 				reputation => $b->{att}->{reputation},
@@ -607,59 +545,48 @@ sub node_heaven {
 		}
 	};
 
-	@{ $self->{heaven} } = ();
-	
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'heaven',
-			$handlers,
-			%opt
-		],
-	sub {
-		return @{ $self->{heaven} };
-	});
+	return $self->parse( 'heaven', $handlers, \@heaven, %opt );
 }
 
 sub maintenance_nodes {
 	my $self = shift	or croak "Usage: maintenance_nodes E2TICKER";
 
+	my @maintenance;
+	
+	warn "E2::Ticker::maintenance_nodes"		if $DEBUG > 1;
+
 	my $handlers = {
 		'e2link' => sub {
 			(my $a, my $b) = @_;
-			push @{ $self->{maintenance} }, {
+			push @maintenance, {
 				title	=> $b->text,
 				id	=> $b->{att}->{node_id}
 			};
 		}
 	};
 
-	@{ $self->{maintenance} } = ();
-
-	return $self->thread_then( 
-		[
-			\&parse,
-			$self,
-			'maintenance',
-			$handlers,
-		],
-	sub {
-		return @{ $self->{maintenance} };
-	});
+	return $self->parse( 'maintenance', $handlers, \@maintenance );
 }
 
 sub scratch_pad {
-	my $self = shift	or croak "Usage: scratch_pad E2TICKER [, USER ]";
+	my $self = shift or croak "Usage: scratch_pad E2TICKER [, USER ]";
 	my $user_id = shift;
 	my %opt;
+
+	my $scratch = {};
 	
+	warn "E2::Ticker::scratch_pad"		if $DEBUG > 1;
+
+	# This method is freakish because it doesn't return a list. What this
+	# means is we're going to have to call parse() and then do some post-
+	# processing (which means we have to use thread_then)
+
 	$opt{scratch} = $user_id	if $user_id;
 
 	my $handlers = {
 		'scratchtxt' => sub {
 			(my $a, my $b) = @_;
-			$self->{scratch} = {
+			$scratch = {
 				text => $b->text,
 				user => $b->{att}->{user},
 				public => $b->{att}->{public}
@@ -667,43 +594,46 @@ sub scratch_pad {
 		}
 	};
 
-	$self->{scratch} = {};
-
 	return $self->thread_then( 
 		[
 			\&parse,
 			$self,
 			'scratch',
 			$handlers,
+			[],	# dummy value for array
 			%opt
 		],
-	sub {
-		return $self->{scratch};
-	});
+		sub { return $scratch }
+	);
 }
 
 sub raw_vars {
 	my $self = shift	or croak "Usage: raw_vars E2TICKER";
 
+	my $vars = {};
+	
+	warn "E2::Ticker::raw_vars"		if $DEBUG > 1;
+
+	# Another method that doesn't return a list. Again, we'll have
+	# to thread_then
+
 	my $handlers = {
 		'key' => sub {
 			(my $a, my $b) = @_;
-			$self->{vars}->{$b->{att}->{name}} = $b->text;
+			$vars->{$b->{att}->{name}} = $b->text;
 		}
 	};
-
-	$self->{vars} = {};
 
 	return $self->thread_then( 
 		[
 			\&parse,
 			$self,
 			'vars',
-			$handlers
+			$handlers,
+			[]		# dummy value for array
 		],
-	sub {
-		return $self->{vars};
-	});
+		sub { return $vars }
+	);
 }
 
 sub interfaces {
@@ -899,6 +829,8 @@ Each item in the returned list is a hashref with the following keys:
 	level_string	# The level string of this user 
 			# Example: "11 (Godhead)"
 
+NOTE: The e2 server currently ignores the NOGODS option (ebu_noadmins) and instead serves a list based upon the logged-in user's preference (specified in a checkbox on http://everything2.com/?node=Everything's+Best+Users). The NOGODS option should be considered broken (ignored) until this is resolved serverside.
+
 Exceptions: 'Unable to process request', 'Parse error:'
 
 =item $ticker-E<gt>node_heaven [ NODE_ID ]
@@ -967,7 +899,23 @@ This method returns the "random wit" that was fetched by the last call to C<rand
 
 =item $ticker-E<gt>time_since_now
 
-This method returns the "now" value returned by the last call to C<time_seen>. Returns C<undef> if that method has not been called.
+This method returns the "now" value returned by the last call to C<time_since>. Returns C<undef> if that method has not been called.
+
+=item $ticker-E<gt>use_string STRING
+
+This method can be used to load a ticker from an XML string rather than the everything2.com server. It's used internally for debugging the tickers, and can be used to cache ticker pages (see C<E2::Interface::document>).
+
+C<use_string> only affects the next ticker-loading method called. Example usage:
+
+	my $xml_string = ... ;
+	$ticker->use_string( $xml_string );
+
+	my @w = $ticker->new_writeups;	# loaded from $xml_string
+
+	my @w2 = $ticker->new_writeups; # This time it's loaded from the
+					# e2 servers.
+
+C<use_string> does not check whether the string is of the proper type for that particular ticker-loading method, nor does it check whether or not the string is valid XML. If you use this method, it is assumed you know what you are doing.
 
 =back
 

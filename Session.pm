@@ -1,6 +1,6 @@
 # E2::Session
 # Jose M. Weeks <jose@joseweeks.com>
-# 02 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -13,8 +13,9 @@ use Carp;
 
 use E2::Ticker;
 
-our $VERSION = "0.30";
+our $VERSION = "0.31";
 our @ISA = qw(E2::Ticker);
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 sub new;
 sub clear;
@@ -44,6 +45,8 @@ sub new {
 
 sub clear {
 	my $self = shift	or croak "Usage: clear E2SESSION";
+
+	warn "E2::Session::clear\n"	if $DEBUG > 1;
 
 	$self->{votes} = undef;
 	$self->{cools} = undef;
@@ -121,6 +124,8 @@ sub list_personal_nodes {
 sub update {
 	my $self = shift or croak "Usage: update E2SESSION";
 
+	warn "E2::Session::update\n"	if $DEBUG > 1;
+
 	my $handlers = {
 		'currentuser' => sub {
 			(my $a, my $b) = @_;
@@ -185,7 +190,7 @@ sub update {
 
 	$self->clear;
 
-	return $self->parse( 'session', $handlers );
+	$self->parse( 'session', $handlers, [ 1 ] );
 }
 
 1;
@@ -287,8 +292,8 @@ This method returns information about requirements the user must meet to reach t
 
 This method returns a hashref with the following keys:
 
-	experience	# Extra experience required to reach the next level
-	writeups	# Extra writeups required to reach the next level
+	experience	# Extra experience required to level up
+	writeups	# Extra writeups required to level up
 	level		# The next level as an integer
 
 =back

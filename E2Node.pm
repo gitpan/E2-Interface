@@ -1,6 +1,6 @@
 # E2::E2Node
 # Jose M. Weeks <jose@joseweeks.com>
-# 04 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,8 @@ use E2::Node;
 use E2::Writeup;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.30";
+our $VERSION = "0.31";
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
 
@@ -62,7 +63,9 @@ sub new {
 
 sub clear {
 	my $self = shift	or croak "Usage: clear E2E2NODE";
-	
+
+	warn "E2::E2Node::clear\n"	if $DEBUG > 1;
+
 	@{ $self->{writeups} } = ();	 # Array to hold writeups in currently
 					 # loaded node. See E2::Writeup.
 	
@@ -250,10 +253,14 @@ sub create {
 	my $self  = shift	or croak "Usage: create E2E2NODE, TITLE";
 	my $title = shift	or croak "Usage: create E2E2NODE, TITLE";
 
+	warn "E2::E2Node::create\n"	if $DEBUG > 1;
+
 	# Make sure we have username & user_id
 
-	if( !$self->logged_in ) { return undef; }
-
+	if( !$self->logged_in ) {
+		warn "Unable to create node: not logged in"	if $DEBUG;
+		return undef;
+	}
 
 	return $self->thread_then(
 		[
@@ -283,10 +290,14 @@ sub create {
 
 sub vote {
 	my $self = shift or croak "Usage: vote E2E2NODE, NODE_ID => VOTE [ , NODE_ID2 = VOTE2 [ , ... ] ]";
-
 	my %list = @_    or croak "Usage: vote E2E2NODE, NODE_ID => VOTE [ , NODE_ID2 = VOTE2 [ , ... ] ]";
 
-	if( !$self->logged_in ) { return undef; }
+	warn "E2::E2Node::vote\n"	if $DEBUG > 1;
+
+	if( !$self->logged_in ) {
+		warn "Unable to vote: not logged in"	if $DEBUG;
+		return undef;
+	}
 
 	my %params = (	node_id		=> $self->{node_id},
 			op		=> "vote",
@@ -326,7 +337,12 @@ sub add_writeup {
 	  or croak "Usage: add_writeup E2E2NODE, TEXT, TYPE [ , NODISPLAY ]";
 	my $nodisplay = shift;
 
-	if( !$self->logged_in ) { return undef; }
+	warn "E2::E2Node::add_writeup\n"	if $DEBUG > 1;
+
+	if( !$self->logged_in ) {
+		warn "Unable to add writeup: not logged in"	if $DEBUG;
+		return undef;
+	}
 
 	return $self->thread_then(
 		[
@@ -335,8 +351,8 @@ sub add_writeup {
 			node	=> "new writeup",
 			op	=> "new",
 			type	=> "writeup",
-			node	=> $self->{node_id},	# Why two "node" params? I dunno.
-			writeup_notnew	=> $nodisplay,
+			node	=> $self->{node_id},	# Why two "node" params?
+			writeup_notnew	=> $nodisplay,  # dunno....
 			writeup_doctext	=> $text,
 			writeup_parent_e2node	=> $self->{node_id},
 			writeuptype	=> $type

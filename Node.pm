@@ -1,6 +1,6 @@
 # E2::Node
 # Jose M. Weeks <jose@joseweeks.com>
-# 14 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -14,7 +14,8 @@ use Carp;
 use E2::Interface;
 
 our @ISA = "E2::Interface";
-our $VERSION = "0.30";
+our $VERSION = "0.31";
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
 
@@ -50,6 +51,8 @@ sub new {
 sub clear {
 	my $self = shift or croak "Usage: clear E2NODE";
 
+	warn "E2::Node::clear\n"	if $DEBUG > 1;
+
 	$self->{title}		= undef; # Title of the node
 	$self->{node_id}	= undef; # node_id
 	$self->{author}		= undef; # Author (node creator)
@@ -66,6 +69,9 @@ sub type_as_string {
 
 sub autodetect {
 	my $self = shift or croak "Usage: autodetect E2NODE";
+	
+	warn "E2::Node::autodetect\n"	if $DEBUG > 1;
+	
 	bless $self, 'E2::Node';
 	return 1;
 }
@@ -75,13 +81,18 @@ sub load {
 	my $title = shift or croak "Usage: load E2NODE, TITLE [, TYPE]";
 	my $type  = shift || $self->type_as_string;
 
+	warn "E2::Node::load\n"		if $DEBUG > 1;
+
+	warn "Loading node $title"	if $DEBUG > 2;
+
 	my %opt;
 
 	$opt{node}	  = $title;
 	$opt{displaytype} = 'xmltrue';
 	$opt{type}	  = $type	if $type;
 
-	return $self->thread_then( [ \&E2::Interface::process_request, $self, %opt ],
+	return $self->thread_then(
+		[ \&E2::Interface::process_request, $self, %opt ],
 	sub {
 		my $r = shift;
 		return $self->load_from_xml( $r, $type );
@@ -92,6 +103,10 @@ sub load_by_id {
 	my $self = shift or croak "Usage: load_by_id E2NODE, NODE_ID [, TYPE]";
 	my $id   = shift or croak "Usage: load_by_id E2NODE, NODE_ID [, TYPE]";
 	my $type = shift || $self->type_as_string;
+
+	warn "E2::Node::load_by_id\n"	if $DEBUG > 1;
+
+	warn "Loading node_id $id"	if $DEBUG > 2;
 
 	my %opt;
 
@@ -112,11 +127,16 @@ sub load_from_xml {
 	my $xml	 = shift or croak "Usage: load_from_xml E2NODE, XML_STRING [, TYPE ]";
 	my $type = shift || $self->type_as_string;
 
+	warn "E2::Node::load_from_xml\n"	if $DEBUG > 1;
+
 	my %type_to_class = (
 		e2node		=> 'E2::E2Node',
 		writeup 	=> 'E2::E2Node',
 		user		=> 'E2::User',
-		superdoc	=> 'E2::Superdoc'
+		usergroup	=> 'E2::Usergroup',
+		room		=> 'E2::Room',
+		superdoc	=> 'E2::Superdoc',
+		superdocnolinks	=> 'E2::Superdoc'
 	);
 
 	# Determine what type the XML says it is.
@@ -136,6 +156,7 @@ sub load_from_xml {
 
 	if( $1 == 1140332 && 				# Search node_id
 	    (!$type || lc($type) ne 'superdoc') ) {
+	    	warn "Hit search superdoc"	if $DEBUG;
 		return undef;
 	}
 
@@ -164,6 +185,8 @@ sub load_from_xml {
 
 		require $c;
 		bless $self, $class;
+
+		warn "Autodetected type $class"		if $DEBUG > 2;
 
 	# Otherwise, make sure the node is of the type
 	# we expect.
@@ -215,6 +238,8 @@ sub load_from_xml {
 sub bookmark {
 	my $self = shift	or croak "Usage: bookmark E2NODE [, NODE_ID ]";
 	my $node_id = shift || $self->node_id;
+
+	warn "E2::Node::bookmark\n"	if $DEBUG > 1;
 
 	if( !$self->logged_in ) {
 		croak "Not logged in";

@@ -1,6 +1,6 @@
 # E2::Superdoc
 # Jose M. Weeks <jose@joseweeks.com>
-# 04 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,8 @@ use HTML::Entities;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.30";
+our $VERSION = "0.31";
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
 
@@ -28,6 +29,7 @@ sub text;
 
 sub type_as_string;
 sub twig_handlers;
+
 # Object Methods
 
 sub new {
@@ -43,6 +45,8 @@ sub new {
 
 sub clear {
 	my $self = shift	or croak "Usage: clear E2SUPERDOC";
+
+	warn "E2::Superdoc::clear\n"	if $DEBUG > 1;
 
 	$self->{text} = undef;
 

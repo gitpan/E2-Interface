@@ -1,6 +1,6 @@
 # E2::Writeup
 # Jose M. Weeks <jose@joseweeks.com>
-# 04 May 2003
+# 05 June 2003
 #
 # See bottom for pod documentation.
 
@@ -15,7 +15,8 @@ use HTML::Entities;
 use E2::Node;
 
 our @ISA = "E2::Node";
-our $VERSION = "0.30";
+our $VERSION = "0.31";
+our $DEBUG; *DEBUG = *E2::Interface::DEBUG;
 
 # Prototypes
 
@@ -58,6 +59,8 @@ sub new {
 sub clear {
 	my $self = shift	or croak "Usage: clear E2WRITEUP";
 
+	warn "E2::Writeup::clear\n"	if $DEBUG > 1;
+	
 	$self->{author} 	= undef;
 	$self->{author_id}	= undef;
 	$self->{wrtype}		= undef;
@@ -91,6 +94,8 @@ sub parse {
 	my $self = shift	or croak "Usage: parse E2WRITEUP, TWIG";
 	my $b = shift		or croak "Usage: parse E2WRITEUP, TWIG";
 
+	warn "E2::Writeup::parse\n"	if $DEBUG > 1;
+
 	# $b is an XML::Twig
 
 	$self->{node_id}	= $b->{att}->{node_id};
@@ -98,7 +103,8 @@ sub parse {
 	$self->{marked}		= $b->{att}->{marked};
 	$self->{wrtype}		= $b->first_child('writeuptype')->text;
 	
-	my $c			= $b->first_child('parent')->first_child('e2link');
+	my $c			= $b->first_child('parent')->
+					first_child('e2link');
 	$self->{parent}		= $c->text;
 	$self->{parent_id}	= $c->{att}->{node_id};
 
@@ -152,8 +158,16 @@ sub cool {
 	my $self = shift	or croak "Usage: cool E2WRITEUP [, NODE_ID ]";
 	my $node_id = shift || $self->node_id;
 
-	if( !$self->logged_in ) { return undef; }
-	if( !$node_id )		{ return undef; }
+	warn "E2::Writeup::cool\n"	if $DEBUG > 1;
+
+	if( !$self->logged_in ) {
+		warn "Unable to cool: not logged in"		if $DEBUG;
+		return undef;
+	}
+	if( !$node_id ) {
+		warn "Unable to cool: no node specified"	if $DEBUG;
+		return undef;
+	}
 
 	return $self->thread_then(
 		[
@@ -175,6 +189,8 @@ sub update {
 	my $type_s = shift;
 	my $type;
 
+	warn "E2::Writeup::update\n"	if $DEBUG > 1;
+
 	# Translate type to code
 
 	my %h = (	person	=> 249,
@@ -184,9 +200,13 @@ sub update {
 
 	# Make sure we are logged-in and this is our writeup
 
-	if( !$self->logged_in ) { return undef; }
+	if( !$self->logged_in ) {
+		warn "Unable to update: not logged in"		if $DEBUG;
+		return undef;
+	}
 
 	if( lc($self->this_username) ne lc($self->author) )	{ 
+		warn "Unable to update: not your writeup"	if $DEBUG;
 		return undef;
 	}
 
@@ -332,7 +352,7 @@ C<clear> clears all the information currently stored in $writeup. It returns tru
 
 =item $writeup-E<gt>marked;
 
-=item $writeup-><gt>cool_count;
+=item $writeup-E<gt>cool_count;
 
 =item $writeup-E<gt>text;
 
